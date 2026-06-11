@@ -1,0 +1,5467 @@
+# Herofy Queries
+# These queries power the frontend application
+
+# ============================================================================
+# USER & WORKSPACE
+# ============================================================================
+
+# Get current user by Firebase Auth UID
+# TODO: Change back to @auth(level: USER) once auth emulator is configured
+query GetCurrentUser @auth(level: USER_ANON) {
+  user(key: { id_expr: "auth.uid" }) {
+    id
+    email
+    displayName
+    avatarUrl
+    createdAt
+    # Get workspaces this user belongs to
+    workspaceMembers_on_user {
+      role
+      joinedAt
+      hasCompletedSetup
+      workspace {
+        id
+        name
+        slug
+        setupCompleted
+      }
+    }
+  }
+}
+
+# Get user by explicit ID (for use when auth.uid context isn't available)
+# This is needed when using real Firebase Auth with DataConnect emulator
+# Using users() with where clause instead of user(key:) for better compatibility
+query GetUserById($userId: String!) @auth(level: USER_ANON) {
+  users(where: { id: { eq: $userId } }, limit: 1) {
+    id
+    email
+    displayName
+    avatarUrl
+    createdAt
+    workspaceMembers_on_user {
+      role
+      joinedAt
+      hasCompletedSetup
+      workspace {
+        id
+        name
+        slug
+        setupCompleted
+      }
+    }
+  }
+}
+
+# Check if user is a member of a workspace (for backend auth middleware)
+query CheckWorkspaceMembership($workspaceId: UUID!, $userId: String!) @auth(level: NO_ACCESS) {
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq: $userId } }
+    limit: 1
+  ) {
+    role
+  }
+}
+
+# Get workspace by ID with member count
+query GetWorkspace($id: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of this workspace (redacted; aborts read if not).
+  _membership: workspace(id: $id) @redact @check(expr: "this != null", message: "Workspace not found") {
+    workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+      @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+  }
+  workspace(id: $id) {
+    id
+    name
+    slug
+    domain
+    valueProp
+    createdAt
+    workspaceMembers_on_workspace {
+      user {
+        id
+        email
+        displayName
+        avatarUrl
+      }
+      role
+      joinedAt
+    }
+  }
+}
+
+# Get workspace by ID (PUBLIC for backend enrichment service)
+query GetWorkspacePublic($id: UUID!) @auth(level: NO_ACCESS) {
+  workspace(id: $id) {
+    id
+    name
+    slug
+    domain
+    valueProp
+  }
+}
+
+# Find workspace by email domain (for team matching on signup)
+query GetWorkspaceByDomain($domain: String!) @auth(level: USER) {
+  workspaces(where: { domain: { eq: $domain } }, limit: 1) {
+    id
+    name
+    slug
+    domain
+    setupCompleted
+    # Get ALL members to check if current user is already a member
+    workspaceMembers_on_workspace {
+      role
+      hasCompletedSetup
+      user {
+        id
+        displayName
+        email
+      }
+    }
+  }
+}
+
+# Get pending join requests for a workspace (for admins)
+query GetPendingJoinRequests($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  workspaceJoinRequests(
+    where: { workspaceId: { eq: $workspaceId }, status: { eq: pending } }
+    orderBy: [{ createdAt: DESC }]
+  ) {
+    id
+    userId
+    userEmail
+    status
+    createdAt
+  }
+}
+
+# Get join request status for current user
+query GetMyJoinRequest($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  workspaceJoinRequests(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) {
+    id
+    status
+    createdAt
+    reviewedAt
+  }
+}
+
+# Get workspace member role for current user
+query GetWorkspaceMemberRole($workspaceId: UUID!) @auth(level: USER_ANON) {
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) {
+    role
+    joinedAt
+    user {
+      id
+      email
+      displayName
+    }
+    workspace {
+      id
+      name
+      slug
+    }
+  }
+}
+
+# Get all workspace members (for team management)
+query GetWorkspaceMembers($workspaceId: UUID!) @auth(level: USER) {
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId } }
+    orderBy: [{ joinedAt: ASC }]
+  ) {
+    role
+    joinedAt
+    hasCompletedSetup
+    user {
+      id
+      email
+      displayName
+      avatarUrl
+    }
+  }
+}
+
+# Get workspace member setup status (for checking if setup is complete)
+query GetWorkspaceMemberSetupStatus($workspaceId: UUID!, $userId: String!) @auth(level: USER) {
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq: $userId } }
+    limit: 1
+  ) {
+    hasCompletedSetup
+  }
+}
+
+# ============================================================================
+# WORKSPACE INVITATIONS
+# ============================================================================
+
+# Get pending invitations for a workspace (admin view)
+query GetPendingInvitations($workspaceId: UUID!) @auth(level: USER) {
+  workspaceInvitations(
+    where: { workspaceId: { eq: $workspaceId }, status: { eq: pending } }
+    orderBy: [{ createdAt: DESC }]
+  ) {
+    id
+    email
+    role
+    token
+    expiresAt
+    status
+    createdAt
+    invitedByUser {
+      id
+      displayName
+      email
+    }
+  }
+}
+
+# Get invitation by token (public - for accepting invitations)
+query GetInvitationByToken($token: String!) @auth(level: NO_ACCESS) {
+  workspaceInvitations(
+    where: { token: { eq: $token } }
+    limit: 1
+  ) {
+    id
+    email
+    role
+    expiresAt
+    status
+    createdAt
+    workspace {
+      id
+      name
+      slug
+    }
+    invitedByUser {
+      displayName
+      email
+    }
+  }
+}
+
+# Check if user is already a member (for invitation acceptance)
+query CheckExistingMembership($workspaceId: UUID!, $userId: String!) @auth(level: NO_ACCESS) {
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq: $userId } }
+    limit: 1
+  ) {
+    role
+  }
+}
+
+# Check if invitation already exists for email
+query CheckExistingInvitation($workspaceId: UUID!, $email: String!) @auth(level: USER) {
+  workspaceInvitations(
+    where: {
+      workspaceId: { eq: $workspaceId }
+      email: { eq: $email }
+      status: { eq: pending }
+    }
+    limit: 1
+  ) {
+    id
+    expiresAt
+  }
+}
+
+# ============================================================================
+# TODAY QUEUE (NEEDS)
+# ============================================================================
+
+# Get active needs for the today queue
+query GetTodayQueue($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  needs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      resolvedAt: { isNull: true }
+    }
+    orderBy: [{ priorityRank: ASC }, { createdAt: ASC }]
+    limit: 50
+  ) {
+    id
+    type
+    headline
+    lede
+    priorityRank
+    focusSection
+    snoozedUntil
+    resolvedAt
+    agentReasoning
+    createdAt
+    customer {
+      id
+      name
+      slug
+      lifecycle
+      arrCents
+      tier
+    }
+    milestone {
+      id
+      title
+      status
+      targetDate
+    }
+    meeting {
+      id
+      title
+      scheduledAt
+    }
+    # Get recommendations for this need
+    needRecommendations_on_need(limit: 1, orderBy: { createdAt: DESC }) {
+      primaryAction
+      secondaryAction
+      rationale
+      confidenceText
+    }
+    # Get threads for this need
+    threads_on_need(limit: 1, orderBy: { updatedAt: DESC }) {
+      id
+      subject
+      threadType
+      status
+    }
+    # Get linked agent run (for sidekick questions and plan approvals)
+    agentRun {
+      id
+      status
+      clarifyingQuestions
+      pausedAt
+      # Include plan for plan_approval_required needs
+      plan {
+        id
+        status
+      }
+    }
+  }
+}
+
+# Get a single need by ID
+query GetNeed($id: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: need(id: $id) @redact @check(expr: "this != null", message: "Need not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  need(id: $id) {
+    id
+    type
+    headline
+    lede
+    priorityRank
+    focusSection
+    snoozedUntil
+    resolvedAt
+    source
+    agentReasoning
+    createdAt
+    updatedAt
+    customer {
+      id
+      name
+      slug
+      lifecycle
+      arrCents
+      tier
+    }
+    milestone {
+      id
+      title
+      status
+      targetDate
+      description
+      blockedReason
+    }
+    meeting {
+      id
+      title
+      scheduledAt
+      durationMinutes
+    }
+    agentRun {
+      id
+      agentName
+      status
+      clarifyingQuestions
+      currentStep
+      plan {
+        id
+        status
+        headline
+      }
+    }
+    thread { id }
+    draftResponses_on_surfacedInNeed(orderBy: { generatedAt: DESC }) {
+      id
+      subject
+      body
+      citations
+      editedBody
+      status
+      generatedAt
+      thread { id }
+    }
+    needRecommendations_on_need {
+      id
+      primaryAction
+      secondaryAction
+      rationale
+      confidenceText
+    }
+    needEvidences_on_need {
+      id
+      interaction {
+        id
+        subject
+        summaryAi
+        occurredAt
+      }
+      meeting {
+        id
+        title
+        scheduledAt
+      }
+    }
+    threads_on_need {
+      id
+      subject
+      threadType
+      status
+      channel
+      updatedAt
+    }
+  }
+}
+
+# Check for existing unresolved need of a specific type for a customer
+# Used to avoid creating duplicate needs
+query GetExistingNeedByType(
+  $customerId: UUID!
+  $needType: NeedType!
+) @auth(level: NO_ACCESS) {
+  needs(
+    where: {
+      customer: { id: { eq: $customerId } }
+      type: { eq: $needType }
+      resolvedAt: { isNull: true }
+    }
+    orderBy: { createdAt: DESC }
+    limit: 1
+  ) {
+    id
+    headline
+    createdAt
+  }
+}
+
+# ============================================================================
+# CUSTOMERS
+# ============================================================================
+
+# List customers for a workspace (PUBLIC for testing - remove in production)
+query GetCustomersPublic($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId. Redacted from the response;
+  # @check aborts the read if no membership row matches auth.uid.
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  customers(
+    where: { workspace: { id: { eq: $workspaceId } } }
+    orderBy: { name: ASC }
+  ) {
+    id
+    name
+    slug
+    oneLiner
+    tier
+    arrCents
+    lifecycle
+    daysToRenewal
+    onboardingDayCurrent
+    onboardingDayTotal
+    renewalReadiness
+    externalSource
+    externalId
+    rawNotes
+    linkedPages
+    # AI Classification
+    aiClassificationGroup
+    aiClassificationConfidence
+    aiClassificationReasoning
+    aiClassificationWhatIKnow
+    aiClassificationUncertainties
+    aiClassificationAt
+    createdAt
+    signals_on_customer(
+      where: { supersededAt: { isNull: true } }
+      limit: 3
+    ) {
+      kind
+      state
+      sentence
+    }
+  }
+}
+
+# List customers for a workspace
+query GetCustomers($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  customers(
+    where: { workspace: { id: { eq: $workspaceId } } }
+    orderBy: { name: ASC }
+  ) {
+    id
+    name
+    slug
+    oneLiner
+    tier
+    arrCents
+    lifecycle
+    daysToRenewal
+    onboardingDayCurrent
+    onboardingDayTotal
+    renewalReadiness
+    enrichmentStatus
+    createdAt
+    # Get current signals
+    signals_on_customer(
+      where: { supersededAt: { isNull: true } }
+      limit: 3
+    ) {
+      kind
+      state
+      sentence
+    }
+  }
+}
+
+# Get customers with external source set (for sync operations)
+query GetCustomersWithExternalSource($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  customers(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      externalSource: { isNull: false }
+    }
+    orderBy: { name: ASC }
+  ) {
+    id
+    name
+    externalSource
+    externalId
+    linkedPages
+    lastSyncedAt
+  }
+}
+
+# Get customers in onboarding/handoff lifecycle for agent triggering
+query GetCustomersNeedingOnboarding($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  customers(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      lifecycle: { in: [onboarding, handoff] }
+    }
+    orderBy: { name: ASC }
+  ) {
+    id
+    name
+    lifecycle
+    aiPlans_on_customer {
+      id
+    }
+  }
+}
+
+# Get customer detail with all related data
+query GetCustomer($id: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: customer(id: $id) @redact @check(expr: "this != null", message: "Customer not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  customer(id: $id) {
+    id
+    name
+    slug
+    oneLiner
+    tier
+    arrCents
+    lifecycle
+    daysToRenewal
+    onboardingDayCurrent
+    onboardingDayTotal
+    renewalReadiness
+    valueRealizationText
+    enrichmentStatus
+    rawNotes
+    # External source tracking
+    externalSource
+    externalId
+    linkedPages
+    # Playbook reference (for onboarding progress)
+    adaptedFromPlaybookId
+    # Health tracking
+    clientSignedDate
+    relationshipHealth
+    relationshipHealthScore
+    relationshipHealthUpdatedBy
+    relationshipHealthUpdatedAt
+    relationshipHealthReason
+    createdAt
+    updatedAt
+    # Stakeholders
+    stakeholders_on_customer {
+      id
+      name
+      email
+      role
+      status
+      sentimentNote
+      lastInteractionAt
+    }
+    # Goals
+    goals_on_customer(orderBy: [{ isPrimary: DESC }, { sortOrder: ASC }]) {
+      id
+      text
+      status
+      sortOrder
+      isPrimary
+      # Source attribution
+      source
+      sourceType
+      sourceDate
+      sourceInteractionId
+      sourceThreadId
+      # Last 3 observations per goal
+      goalObservations_on_goal(
+        where: { status: { eq: active } }
+        orderBy: { observedAt: DESC }
+        limit: 3
+      ) {
+        id
+        text
+        confidence
+        sourceType
+        observedAt
+        sourceInteraction {
+          id
+          senderName
+          occurredAt
+        }
+      }
+    }
+    # Signals
+    signals_on_customer(
+      where: { supersededAt: { isNull: true } }
+    ) {
+      id
+      kind
+      state
+      sentence
+      evidenceText
+      nextAction
+      generatedAt
+    }
+    # Milestones
+    milestones_on_customer(orderBy: { sortOrder: ASC }) {
+      id
+      title
+      ownerLabel
+      ownerSide
+      targetDate
+      status
+      description
+      blockedReason
+      sortOrder
+      goalRationale
+      goal {
+        id
+        text
+        isPrimary
+      }
+    }
+    # Commitments
+    commitments_on_customer {
+      id
+      side
+      text
+      dueLabel
+      status
+      stake
+      stakeHolder {
+        id
+        name
+        role
+      }
+      createdAt
+    }
+    # Recent needs
+    needs_on_customer(
+      where: { resolvedAt: { isNull: true } }
+      orderBy: { priorityRank: ASC }
+      limit: 5
+    ) {
+      id
+      type
+      headline
+      lede
+      priorityRank
+      createdAt
+    }
+    # Upcoming meetings
+    meetings_on_customer(
+      orderBy: { scheduledAt: ASC }
+      limit: 5
+    ) {
+      id
+      title
+      type
+      scheduledAt
+      durationMinutes
+    }
+  }
+}
+
+# Get customer detail with all related data (PUBLIC for testing - remove in production)
+query GetCustomerPublic($id: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to the customer's workspace (redacted; aborts read if not).
+  _membership: customer(id: $id) @redact @check(expr: "this != null", message: "Customer not found") {
+    workspace {
+      workspaceMembers_on_workspace(
+        where: { userId: { eq_expr: "auth.uid" } }
+        limit: 1
+      ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+        role
+      }
+    }
+  }
+  customer(id: $id) {
+    id
+    name
+    slug
+    oneLiner
+    tier
+    arrCents
+    lifecycle
+    daysToRenewal
+    onboardingDayCurrent
+    onboardingDayTotal
+    renewalReadiness
+    valueRealizationText
+    enrichmentStatus
+    rawNotes
+    linkedPages
+    externalSource
+    externalId
+    createdAt
+    updatedAt
+    workspace {
+      id
+    }
+    # Stakeholders
+    stakeholders_on_customer {
+      id
+      name
+      email
+      role
+      status
+      sentimentNote
+      lastInteractionAt
+    }
+    # Goals
+    goals_on_customer(orderBy: [{ isPrimary: DESC }, { sortOrder: ASC }]) {
+      id
+      text
+      status
+      sortOrder
+      isPrimary
+      # Source attribution
+      source
+      sourceType
+      sourceDate
+      sourceInteractionId
+      sourceThreadId
+      # Last 3 observations per goal
+      goalObservations_on_goal(
+        where: { status: { eq: active } }
+        orderBy: { observedAt: DESC }
+        limit: 3
+      ) {
+        id
+        text
+        confidence
+        sourceType
+        observedAt
+        sourceInteraction {
+          id
+          senderName
+          occurredAt
+        }
+      }
+    }
+    # Signals
+    signals_on_customer(
+      where: { supersededAt: { isNull: true } }
+    ) {
+      id
+      kind
+      state
+      sentence
+      evidenceText
+      nextAction
+      generatedAt
+    }
+    # Milestones
+    milestones_on_customer(orderBy: { sortOrder: ASC }) {
+      id
+      title
+      ownerLabel
+      ownerSide
+      targetDate
+      status
+      description
+      blockedReason
+      sortOrder
+      goalRationale
+      goal {
+        id
+        text
+        isPrimary
+      }
+    }
+    # Commitments
+    commitments_on_customer {
+      id
+      side
+      text
+      dueLabel
+      status
+      stake
+      stakeHolder {
+        id
+        name
+        role
+      }
+      createdAt
+    }
+    # Recent needs
+    needs_on_customer(
+      where: { resolvedAt: { isNull: true } }
+      orderBy: { priorityRank: ASC }
+      limit: 5
+    ) {
+      id
+      type
+      headline
+      lede
+      priorityRank
+      createdAt
+    }
+    # Upcoming meetings
+    meetings_on_customer(
+      orderBy: { scheduledAt: ASC }
+      limit: 5
+    ) {
+      id
+      title
+      type
+      scheduledAt
+      durationMinutes
+    }
+  }
+}
+
+# Get customers pending enrichment (for background enrichment worker)
+query GetPendingEnrichmentCustomers($workspaceId: UUID!, $limit: Int!) @auth(level: NO_ACCESS) {
+  customers(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      enrichmentStatus: { eq: pending }
+    }
+    orderBy: { createdAt: ASC }
+    limit: $limit
+  ) {
+    id
+    name
+    slug
+    oneLiner
+    tier
+    arrCents
+    lifecycle
+    rawNotes
+    linkedPages
+    enrichmentAttempts
+    createdAt
+  }
+}
+
+# ============================================================================
+# THREADS & INTERACTIONS
+# ============================================================================
+
+# List threads for a workspace
+query GetThreads($workspaceId: UUID!, $status: ThreadStatus) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  threads(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      status: { eq: $status }
+    }
+    orderBy: { updatedAt: DESC }
+    limit: 50
+  ) {
+    id
+    subject
+    status
+    channel
+    threadType
+    category
+    createdAt
+    updatedAt
+    customer {
+      id
+      name
+      slug
+      lifecycle
+    }
+    need {
+      id
+      type
+      headline
+    }
+    assignedUser {
+      id
+      displayName
+    }
+    # Get latest interaction for preview
+    interactions_on_thread(limit: 1, orderBy: { occurredAt: DESC }) {
+      id
+      senderName
+      direction
+      summaryAi
+      occurredAt
+    }
+  }
+}
+
+# Get quarantined threads (unknown senders awaiting review)
+query GetQuarantinedThreads($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  threads(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      threadType: { eq: quarantined }
+      status: { eq: open }
+    }
+    orderBy: { createdAt: DESC }
+    limit: 100
+  ) {
+    id
+    subject
+    status
+    channel
+    threadType
+    createdAt
+    updatedAt
+    customer {
+      id
+      name
+      slug
+    }
+    # Get latest interaction for preview
+    interactions_on_thread(limit: 1, orderBy: { occurredAt: DESC }) {
+      id
+      senderName
+      direction
+      bodyEncrypted
+      occurredAt
+    }
+  }
+}
+
+# Get thread detail with messages
+query GetThread($id: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: thread(id: $id) @redact @check(expr: "this != null", message: "Thread not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  thread(id: $id) {
+    id
+    subject
+    status
+    channel
+    threadType
+    category
+    aiCategorySuggestion
+    originDetail
+    archivedAt
+    resolvedAt
+    createdAt
+    updatedAt
+    workspace {
+      id
+    }
+    customer {
+      id
+      name
+      slug
+      lifecycle
+      arrCents
+      tier
+    }
+    need {
+      id
+      type
+      headline
+      lede
+      priorityRank
+      agentReasoning
+    }
+    assignedUser {
+      id
+      displayName
+      email
+    }
+    # All interactions (messages)
+    interactions_on_thread(orderBy: { occurredAt: ASC }) {
+      id
+      channel
+      direction
+      senderName
+      occurredAt
+      subject
+      bodyEncrypted
+      summaryAi
+      senderUser {
+        id
+        displayName
+        avatarUrl
+      }
+    }
+  }
+}
+
+# Get thread with full context for AI draft generation (PUBLIC for backend service)
+# Includes thread + interactions + customer signals + commitments
+query GetThreadForDraft($id: UUID!) @auth(level: NO_ACCESS) {
+  thread(id: $id) {
+    id
+    subject
+    status
+    channel
+    threadType
+    category
+    createdAt
+    updatedAt
+    workspace {
+      id
+    }
+    customer {
+      id
+      name
+      slug
+      lifecycle
+      tier
+      oneLiner
+      # Recent signals (last 30 days covered by query filter in service)
+      signals_on_customer(
+        where: { supersededAt: { isNull: true } }
+        orderBy: { generatedAt: DESC }
+        limit: 10
+      ) {
+        kind
+        state
+        sentence
+        generatedAt
+      }
+      # Open commitments
+      commitments_on_customer(
+        where: { status: { eq: in_progress } }
+        orderBy: { createdAt: DESC }
+        limit: 5
+      ) {
+        side
+        text
+        dueLabel
+        stake
+        stakeHolder {
+          id
+          name
+        }
+      }
+    }
+    need {
+      id
+      type
+      headline
+      lede
+    }
+    # Last 20 interactions (most recent first for context)
+    interactions_on_thread(orderBy: { occurredAt: DESC }, limit: 20) {
+      id
+      channel
+      direction
+      senderName
+      occurredAt
+      subject
+      bodyEncrypted
+    }
+  }
+}
+
+# ============================================================================
+# CONVERSATIONS (NEED-CENTRIC)
+# ============================================================================
+
+# Get needs with threads for the Conversations page (Need-centric view)
+# Returns needs sorted by priority with their threads underneath
+# Also returns orphan threads (threads without a need) for fallback display
+query GetConversationNeeds($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  # Active needs with threads
+  needs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      resolvedAt: { isNull: true }
+    }
+    orderBy: [{ priorityRank: ASC }, { updatedAt: DESC }]
+    limit: 100
+  ) {
+    id
+    type
+    status
+    headline
+    lede
+    priorityRank
+    snoozedUntil
+    resolvedAt
+    agentReasoning
+    createdAt
+    updatedAt
+    customer {
+      id
+      name
+      slug
+      lifecycle
+      arrCents
+      tier
+    }
+    milestone {
+      id
+      title
+      status
+      targetDate
+    }
+    meeting {
+      id
+      title
+      scheduledAt
+    }
+    agentRun {
+      id
+      status
+      clarifyingQuestions
+      pausedAt
+    }
+    needRecommendations_on_need(limit: 1, orderBy: { createdAt: DESC }) {
+      primaryAction
+      secondaryAction
+      rationale
+    }
+    # All threads for this need
+    threads_on_need(orderBy: { updatedAt: DESC }) {
+      id
+      subject
+      status
+      threadType
+      channel
+      updatedAt
+      interactions_on_thread(limit: 1, orderBy: { occurredAt: DESC }) {
+        id
+        senderName
+        summaryAi
+        occurredAt
+      }
+    }
+  }
+}
+
+# Resolved needs (for the Conversations "Resolved" filter chip). Mirrors
+# GetConversationNeeds' shape but selects resolved rows, newest-resolved first.
+query GetResolvedConversationNeeds($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  needs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      resolvedAt: { isNull: false }
+    }
+    orderBy: [{ resolvedAt: DESC }]
+    limit: 50
+  ) {
+    id
+    type
+    status
+    headline
+    lede
+    priorityRank
+    snoozedUntil
+    resolvedAt
+    agentReasoning
+    createdAt
+    updatedAt
+    customer {
+      id
+      name
+      slug
+      lifecycle
+      arrCents
+      tier
+    }
+    milestone {
+      id
+      title
+      status
+      targetDate
+    }
+    meeting {
+      id
+      title
+      scheduledAt
+    }
+    agentRun {
+      id
+      status
+      clarifyingQuestions
+      pausedAt
+    }
+    needRecommendations_on_need(limit: 1, orderBy: { createdAt: DESC }) {
+      primaryAction
+      secondaryAction
+      rationale
+    }
+    threads_on_need(orderBy: { updatedAt: DESC }) {
+      id
+      subject
+      status
+      threadType
+      channel
+      updatedAt
+      interactions_on_thread(limit: 1, orderBy: { occurredAt: DESC }) {
+        id
+        senderName
+        summaryAi
+        occurredAt
+      }
+    }
+  }
+}
+
+# Get orphan threads (threads without a need_id) for Conversations page
+query GetOrphanThreads($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  threads(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      needId: { isNull: true }
+      status: { ne: archived }
+    }
+    orderBy: { updatedAt: DESC }
+    limit: 50
+  ) {
+    id
+    subject
+    status
+    threadType
+    channel
+    updatedAt
+    customer {
+      id
+      name
+      slug
+      lifecycle
+    }
+    interactions_on_thread(limit: 1, orderBy: { occurredAt: DESC }) {
+      id
+      senderName
+      summaryAi
+      occurredAt
+    }
+  }
+}
+
+# Get threads for a specific customer
+query GetCustomerThreads($customerId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to the customer's workspace (redacted; aborts read if not).
+  _membership: customer(id: $customerId) @redact @check(expr: "this != null", message: "Customer not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  threads(
+    where: { customer: { id: { eq: $customerId } } }
+    orderBy: { updatedAt: DESC }
+    limit: 20
+  ) {
+    id
+    subject
+    status
+    channel
+    threadType
+    updatedAt
+    interactions_on_thread(limit: 1, orderBy: { occurredAt: DESC }) {
+      summaryAi
+      occurredAt
+    }
+  }
+}
+
+# ============================================================================
+# MEETINGS
+# ============================================================================
+
+# List meetings for a workspace
+query GetMeetings($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  meetings(
+    where: { workspace: { id: { eq: $workspaceId } } }
+    orderBy: { scheduledAt: ASC }
+    limit: 50
+  ) {
+    id
+    title
+    type
+    scheduledAt
+    durationMinutes
+    source
+    externalEventId
+    status
+    recurringEventId
+    linkStatus
+    attendeesOurs
+    attendeesTheirs
+    deletedAt
+    customer {
+      id
+      name
+      slug
+      lifecycle
+    }
+    need {
+      id
+      type
+      headline
+    }
+  }
+}
+
+# Get meeting by external event ID (for calendar webhook processing)
+query GetMeetingByExternalEventId($workspaceId: UUID!, $externalEventId: String!) @auth(level: NO_ACCESS) {
+  meetings(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      externalEventId: { eq: $externalEventId }
+    }
+    limit: 1
+  ) {
+    id
+    title
+    type
+    scheduledAt
+    durationMinutes
+    source
+    externalEventId
+    status
+    recurringEventId
+    linkStatus
+    attendeesOurs
+    attendeesTheirs
+    deletedAt
+    customer {
+      id
+      name
+      slug
+    }
+    need {
+      id
+    }
+  }
+}
+
+# Get meeting detail with brief
+query GetMeeting($id: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: meeting(id: $id) @redact @check(expr: "this != null", message: "Meeting not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  meeting(id: $id) {
+    id
+    title
+    type
+    scheduledAt
+    durationMinutes
+    source
+    externalEventId
+    status
+    recurringEventId
+    linkStatus
+    attendeesOurs
+    attendeesTheirs
+    deletedAt
+    createdAt
+    customer {
+      id
+      name
+      slug
+      lifecycle
+      arrCents
+      tier
+      oneLiner
+      # Get customer context
+      stakeholders_on_customer {
+        id
+        name
+        email
+        role
+        status
+        sentimentNote
+      }
+      signals_on_customer(where: { supersededAt: { isNull: true } }) {
+        kind
+        state
+        sentence
+      }
+      milestones_on_customer(orderBy: { sortOrder: ASC }) {
+        id
+        title
+        status
+        targetDate
+        goalRationale
+        goal {
+          id
+          text
+          isPrimary
+        }
+      }
+      commitments_on_customer(where: { status: { eq: in_progress } }) {
+        id
+        side
+        text
+        dueLabel
+        stake
+        stakeHolder {
+          id
+          name
+        }
+      }
+    }
+    need {
+      id
+      type
+      headline
+      lede
+      agentReasoning
+    }
+    # Meeting brief
+    meetingBriefs_on_meeting(limit: 1, orderBy: { generatedAt: DESC }) {
+      id
+      progressNarrative
+      progressFacts
+      friction
+      talkingPoints
+      valueDelivered
+      riskToRenewal
+      expansionSignals
+      pricingContext
+      followupEmail
+      generatedAt
+    }
+  }
+}
+
+# Get meeting brief by meeting ID (for agent idempotency checks)
+query GetMeetingBriefByMeeting($meetingId: UUID!) @auth(level: NO_ACCESS) {
+  meetingBriefs(
+    where: { meeting: { id: { eq: $meetingId } } }
+    orderBy: { generatedAt: DESC }
+    limit: 1
+  ) {
+    id
+    progressNarrative
+    talkingPoints
+    generatedAt
+  }
+}
+
+# ============================================================================
+# HANDOFFS & AI PLANS
+# ============================================================================
+
+# List handoff briefs
+query GetHandoffs($workspaceId: UUID!, $status: HandoffStatus) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  handoffBriefs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      status: { eq: $status }
+    }
+    orderBy: { capturedAt: DESC }
+  ) {
+    id
+    status
+    capturedAt
+    dayCurrent
+    dayTotal
+    notionDealId
+    notionDealUrl
+    customer {
+      id
+      name
+      slug
+    }
+    confirmedByUser {
+      displayName
+    }
+    confirmedAt
+  }
+}
+
+# Get handoff detail with AI plan
+query GetHandoff($id: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: handoffBrief(id: $id) @redact @check(expr: "this != null", message: "Handoff not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  handoffBrief(id: $id) {
+    id
+    status
+    capturedAt
+    body
+    dayCurrent
+    dayTotal
+    salesCommitments
+    technicalContext
+    realityCheckConfidence
+    realityCheckRisks
+    userCorrections
+    notionDealId
+    notionDealUrl
+    createdAt
+    customer {
+      id
+      name
+      slug
+      lifecycle
+    }
+    confirmedByUser {
+      id
+      displayName
+    }
+    confirmedAt
+    # Open questions
+    handoffOpenQuestions_on_brief {
+      id
+      text
+      resolved
+      createdAt
+    }
+    # AI plans for this brief
+    aiPlans_on_brief(orderBy: { generatedAt: DESC }) {
+      id
+      archetypeName
+      milestoneCount
+      durationLabel
+      rationale
+      headline
+      milestones
+      status
+      humanEdited
+      regenerationCount
+      generatedAt
+      approvedByUser {
+        displayName
+      }
+      approvedAt
+      rejectionReason
+    }
+  }
+}
+
+# Get AI plan detail
+query GetPlan($id: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: aiPlan(id: $id) @redact @check(expr: "this != null", message: "Plan not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  aiPlan(id: $id) {
+    id
+    archetypeName
+    milestoneCount
+    durationLabel
+    rationale
+    headline
+    milestones
+    status
+    humanEdited
+    regenerationCount
+    generatedAt
+    rejectionReason
+    createdAt
+    customer {
+      id
+      name
+      slug
+      # Fetch actual milestone records for display (fallback if milestones JSON is empty)
+      milestones_on_customer(orderBy: { sortOrder: ASC }) {
+        id
+        title
+        ownerSide
+        targetDate
+        status
+        description
+        sortOrder
+        goalRationale
+        goal {
+          id
+          text
+          isPrimary
+        }
+      }
+    }
+    brief {
+      id
+      body
+      salesCommitments
+      technicalContext
+      dayCurrent
+      dayTotal
+    }
+    approvedByUser {
+      id
+      displayName
+    }
+    approvedAt
+  }
+}
+
+# Get AI plan detail (PUBLIC - for backend service)
+query GetPlanPublic($id: UUID!) @auth(level: NO_ACCESS) {
+  aiPlan(id: $id) {
+    id
+    archetypeName
+    milestoneCount
+    durationLabel
+    rationale
+    headline
+    milestones
+    status
+    humanEdited
+    regenerationCount
+    generatedAt
+    rejectionReason
+    createdAt
+    customer {
+      id
+      name
+      slug
+      workspace {
+        id
+      }
+    }
+    brief {
+      id
+      body
+      salesCommitments
+      technicalContext
+      dayCurrent
+      dayTotal
+    }
+    approvedByUser {
+      id
+      displayName
+    }
+    approvedAt
+  }
+}
+
+# ============================================================================
+# AGENT RUNS
+# ============================================================================
+
+# Get agent run detail
+query GetAgentRun($id: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: agentRun(id: $id) @redact @check(expr: "this != null", message: "Agent run not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  agentRun(id: $id) {
+    id
+    agentName
+    status
+    triggerType
+    triggeredBy
+    inputParams
+    currentStep
+    contextSnapshot
+    confidenceLevel
+    confidenceScore
+    confidenceReasons
+    pausedAt
+    pauseReason
+    clarifyingQuestions
+    resumedAt
+    resumeAnswers
+    result
+    errorMessage
+    usedFallback
+    fallbackReason
+    startedAt
+    completedAt
+    durationMs
+    createdAt
+    customer {
+      id
+      name
+      slug
+    }
+    brief {
+      id
+      status
+    }
+    plan {
+      id
+      status
+    }
+    blockingNeed {
+      id
+      type
+      headline
+    }
+    # Non-blocking questions (side-asks, kickoff items)
+    handoffQuestions_on_agentRun(orderBy: { createdAt: ASC }) {
+      id
+      question
+      field
+      routing
+      questionType
+      metadata
+      proposedAnswer
+      status
+      answerText
+    }
+  }
+}
+
+# Get agent runs waiting for input
+query GetWaitingRuns($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  agentRuns(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      status: { eq: waiting_for_input }
+    }
+    orderBy: { pausedAt: ASC }
+  ) {
+    id
+    agentName
+    status
+    currentStep
+    pausedAt
+    pauseReason
+    clarifyingQuestions
+    customer {
+      id
+      name
+    }
+    blockingNeed {
+      id
+      headline
+    }
+  }
+}
+
+# DEBUG: Get ALL agent runs in workspace (for debugging)
+query GetAllAgentRuns($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  agentRuns(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+    }
+    orderBy: { createdAt: DESC }
+    limit: 50
+  ) {
+    id
+    agentName
+    status
+    currentStep
+    pausedAt
+    pauseReason
+    clarifyingQuestions
+    errorMessage
+    createdAt
+    customer {
+      id
+      name
+    }
+    blockingNeed {
+      id
+      headline
+    }
+  }
+}
+
+# Get agent runs with clarifying questions (for Sidekick page)
+# Includes any status - waiting_for_input, failed, resuming, etc.
+# The UI should show questions regardless of run status
+query GetRunsWithQuestions($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  agentRuns(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      clarifyingQuestions: { isNull: false }
+      status: { in: [waiting_for_input, failed, resuming] }
+    }
+    orderBy: { pausedAt: ASC }
+  ) {
+    id
+    agentName
+    status
+    currentStep
+    pausedAt
+    pauseReason
+    clarifyingQuestions
+    customer {
+      id
+      name
+    }
+    blockingNeed {
+      id
+      headline
+    }
+  }
+}
+
+# Get agent run by ID (PUBLIC for backend service)
+query GetAgentRunPublic($id: UUID!) @auth(level: NO_ACCESS) {
+  agentRun(id: $id) {
+    id
+    agentName
+    status
+    triggerType
+    triggeredBy
+    inputParams
+    currentStep
+    contextSnapshot
+    confidenceLevel
+    confidenceScore
+    confidenceReasons
+    pausedAt
+    pauseReason
+    clarifyingQuestions
+    resumedAt
+    resumeAnswers
+    result
+    errorMessage
+    usedFallback
+    fallbackReason
+    startedAt
+    completedAt
+    durationMs
+    createdAt
+    workspace {
+      id
+    }
+    customer {
+      id
+      name
+    }
+    blockingNeed {
+      id
+      resolvedAt
+    }
+    brief {
+      id
+    }
+    plan {
+      id
+    }
+  }
+}
+
+# Get active (non-terminal) agent run for a specific agent
+query GetActiveAgentRun($workspaceId: UUID!, $agentName: String!) @auth(level: NO_ACCESS) {
+  agentRuns(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      agentName: { eq: $agentName }
+      status: { in: [initialized, running, waiting_for_input, resuming] }
+    }
+    orderBy: { createdAt: DESC }
+    limit: 1
+  ) {
+    id
+    agentName
+    status
+    currentStep
+    createdAt
+  }
+}
+
+# Get waiting runs with resolved blocking needs (for resume polling)
+query GetWaitingRunsPublic($workspaceId: UUID!, $agentName: String) @auth(level: NO_ACCESS) {
+  agentRuns(
+    where: {
+      _and: [
+        { workspace: { id: { eq: $workspaceId } } }
+        { status: { eq: waiting_for_input } }
+        {
+          _or: [
+            { agentName: { isNull: true } }
+            { agentName: { eq: $agentName } }
+          ]
+        }
+      ]
+    }
+    orderBy: { pausedAt: ASC }
+  ) {
+    id
+    agentName
+    status
+    currentStep
+    pausedAt
+    contextSnapshot
+    blockingNeed {
+      id
+      resolvedAt
+    }
+  }
+}
+
+# Get agent run with pending clarifying questions that is blocking a specific need
+query GetAgentRunForBlockingNeed($needId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: need(id: $needId) @redact @check(expr: "this != null", message: "Need not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  agentRuns(
+    where: {
+      blockingNeed: { id: { eq: $needId } }
+      status: { eq: waiting_for_input }
+      clarifyingQuestions: { isNull: false }
+    }
+    orderBy: { createdAt: DESC }
+    limit: 1
+  ) {
+    id
+    agentName
+    status
+    clarifyingQuestions
+    currentStep
+    pausedAt
+    customer {
+      id
+      name
+    }
+  }
+}
+
+# ============================================================================
+# AGENT RUN ANSWERS (HITL)
+# ============================================================================
+
+# Get all answers for an agent run
+query GetAgentRunAnswers($agentRunId: UUID!) @auth(level: NO_ACCESS) {
+  agentRunAnswers(
+    where: { agentRun: { id: { eq: $agentRunId } } }
+    orderBy: { answeredAt: ASC }
+  ) {
+    id
+    questionId
+    answerText
+    answeredAt
+    answeredByUser {
+      id
+      displayName
+    }
+  }
+}
+
+# ============================================================================
+# HANDBOOK
+# ============================================================================
+
+# List handbook docs
+query GetHandbook($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  handbookDocs(
+    where: { workspace: { id: { eq: $workspaceId } } }
+    orderBy: { title: ASC }
+  ) {
+    id
+    slug
+    title
+    description
+    blastRadius
+    kind
+    updatedAt
+  }
+}
+
+# Get handbook doc with versions
+query GetHandbookDoc($workspaceId: UUID!, $slug: String!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  handbookDocs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      slug: { eq: $slug }
+    }
+    limit: 1
+  ) {
+    id
+    slug
+    title
+    description
+    body
+    blastRadius
+    createdAt
+    updatedAt
+    # Version history
+    handbookVersions_on_doc(orderBy: { editedAt: DESC }, limit: 10) {
+      id
+      body
+      editedAt
+      editedByUser {
+        displayName
+      }
+    }
+  }
+}
+
+# Get voice docs (Core, Foundations, Scenarios)
+query GetVoiceDocs($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  handbookDocs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      kind: { in: [VOICE_CORE, VOICE_FOUNDATION, VOICE_SCENARIO] }
+    }
+    orderBy: { chapterNum: ASC }
+  ) {
+    id
+    slug
+    title
+    description
+    body
+    kind
+    inheritsFrom {
+      id
+      slug
+      title
+    }
+    triggerExpr
+    affectsSurfaces
+    pinned
+    chapterNum
+    usedInDraftsToday
+    blastRadius
+    createdAt
+    updatedAt
+  }
+}
+
+# Get voice docs for draft generation (PUBLIC for backend service)
+query GetVoiceDocsPublic($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  handbookDocs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      kind: { in: [VOICE_CORE, VOICE_FOUNDATION, VOICE_SCENARIO] }
+    }
+    orderBy: { chapterNum: ASC }
+  ) {
+    id
+    slug
+    title
+    body
+    kind
+    affectsSurfaces
+  }
+}
+
+# Get voice doc with parent (for scenario inheritance)
+query GetVoiceDoc($workspaceId: UUID!, $slug: String!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  handbookDocs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      slug: { eq: $slug }
+    }
+    limit: 1
+  ) {
+    id
+    slug
+    title
+    description
+    body
+    kind
+    inheritsFrom {
+      id
+      slug
+      title
+      body
+    }
+    triggerExpr
+    affectsSurfaces
+    pinned
+    chapterNum
+    usedInDraftsToday
+    blastRadius
+    createdAt
+    updatedAt
+    # Version history
+    handbookVersions_on_doc(orderBy: { editedAt: DESC }, limit: 10) {
+      id
+      body
+      editedAt
+      editedByUser {
+        displayName
+      }
+    }
+  }
+}
+
+# ============================================================================
+# DRAFT RESPONSES
+# ============================================================================
+
+# Get draft response for a thread
+query GetDraftResponse($threadId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: thread(id: $threadId) @redact @check(expr: "this != null", message: "Thread not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  draftResponses(
+    where: {
+      thread: { id: { eq: $threadId } }
+      status: { eq: pending_review }
+    }
+    limit: 1
+    orderBy: { generatedAt: DESC }
+  ) {
+    id
+    subject
+    body
+    citations
+    status
+    editedBody
+    generatedAt
+    createdAt
+    approvedByUser {
+      displayName
+    }
+    approvedAt
+    sentAt
+    surfacedInNeed {
+      id
+      type
+      headline
+    }
+  }
+}
+
+# Latest pending draft for a customer → its thread. Backend-only: lets the send action find the
+# outreach thread by customer (the worker HITL resume has the customer, not a thread).
+query GetPendingDraftForCustomer($workspaceId: UUID!, $customerId: UUID!) @auth(level: NO_ACCESS) {
+  draftResponses(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      status: { eq: pending_review }
+    }
+    orderBy: { generatedAt: DESC }
+    limit: 1
+  ) {
+    id
+    thread {
+      id
+    }
+  }
+}
+
+# A surfaced save Need → its agent run + the run's blocking decision (the approve/counter/hold
+# sidekick_question). Backend-only: lets the send action detect & close an open HITL decision when
+# the CSM sends the outreach from the conversation instead of the Sidekick screen.
+query GetSaveDecisionForNeed($needId: UUID!) @auth(level: NO_ACCESS) {
+  need(id: $needId) {
+    id
+    agentRun {
+      id
+      status
+      blockingNeed {
+        id
+        type
+        resolvedAt
+      }
+    }
+  }
+}
+
+# ============================================================================
+# PLAYBOOKS
+# ============================================================================
+
+# List playbooks
+query GetPlaybooks($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  playbooks(
+    where: { workspace: { id: { eq: $workspaceId } } }
+    orderBy: { name: ASC }
+  ) {
+    id
+    name
+    archetype
+    fitNote
+    scenario
+    drawnFromCount
+    playbookMilestones_on_playbook(orderBy: { sortOrder: ASC }) {
+      id
+      title
+      ownerSide
+      durationDays
+      description
+      sortOrder
+    }
+  }
+}
+
+# List playbooks (PUBLIC for backend)
+query GetPlaybooksPublic($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  playbooks(
+    where: { workspace: { id: { eq: $workspaceId } } }
+    orderBy: { drawnFromCount: DESC }
+  ) {
+    id
+    name
+    archetype
+    fitNote
+    drawnFromCount
+    adoptedFromTemplate {
+      id
+      slug
+      name
+    }
+    timesUsed
+    timesAccepted
+    timesEdited
+    timesRejected
+    lastUsedAt
+    playbookMilestones_on_playbook(orderBy: { sortOrder: ASC }) {
+      id
+      title
+      ownerSide
+      durationDays
+      description
+      sortOrder
+      sourceBlock {
+        id
+        slug
+        name
+      }
+    }
+  }
+}
+
+# Workspace playbooks sorted by success rate (for AI prioritization)
+query GetWorkspacePlaybooksWithLearning($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  playbooks(
+    where: { workspace: { id: { eq: $workspaceId } } }
+    orderBy: { timesAccepted: DESC }
+  ) {
+    id
+    name
+    archetype
+    fitNote
+    drawnFromCount
+    adoptedFromTemplate {
+      id
+      slug
+      complexity
+      estimatedDays
+    }
+    timesUsed
+    timesAccepted
+    timesEdited
+    timesRejected
+    lastUsedAt
+    playbookMilestones_on_playbook(orderBy: { sortOrder: ASC }) {
+      id
+      title
+      ownerSide
+      durationDays
+      description
+      sortOrder
+      sourceBlock {
+        id
+        slug
+        category
+      }
+    }
+  }
+}
+
+# Get a single playbook by ID
+query GetPlaybook($id: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: playbook(id: $id) @redact @check(expr: "this != null", message: "Playbook not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  playbook(id: $id) {
+    id
+    name
+    archetype
+    fitNote
+    scenario
+    drawnFromCount
+    playbookMilestones_on_playbook(orderBy: { sortOrder: ASC }) {
+      id
+      title
+      ownerSide
+      durationDays
+      description
+      sortOrder
+    }
+  }
+}
+
+# ============================================================================
+# PLAYBOOK CATALOG (Global Templates & Blocks)
+# ============================================================================
+
+# Get all active milestone blocks (for AI composition)
+query GetMilestoneBlocks @auth(level: USER_ANON) {
+  milestoneBlocks(
+    where: { isActive: { eq: true } }
+    orderBy: { sortOrder: ASC }
+  ) {
+    id
+    slug
+    name
+    description
+    ownerSide
+    typicalDays
+    minDays
+    maxDays
+    category
+    prerequisites
+    tags
+    sortOrder
+  }
+}
+
+# Get milestone blocks by category
+query GetMilestoneBlocksByCategory($category: BlockCategory!) @auth(level: NO_ACCESS) {
+  milestoneBlocks(
+    where: {
+      isActive: { eq: true }
+      category: { eq: $category }
+    }
+    orderBy: { sortOrder: ASC }
+  ) {
+    id
+    slug
+    name
+    description
+    ownerSide
+    typicalDays
+    minDays
+    maxDays
+    category
+    prerequisites
+    tags
+  }
+}
+
+# Get all active playbook templates (global catalog)
+query GetPlaybookTemplates @auth(level: USER_ANON) {
+  playbookTemplates(
+    where: { isActive: { eq: true } }
+    orderBy: { sortOrder: ASC }
+  ) {
+    id
+    slug
+    name
+    description
+    complexity
+    estimatedDays
+    fitCriteria
+    sortOrder
+    playbookTemplateBlocks_on_template(orderBy: { sortOrder: ASC }) {
+      sortOrder
+      durationOverride
+      isRequired
+      block {
+        id
+        slug
+        name
+        description
+        ownerSide
+        typicalDays
+        minDays
+        maxDays
+        category
+        prerequisites
+        tags
+      }
+    }
+  }
+}
+
+# Get a specific playbook template by slug
+query GetPlaybookTemplateBySlug($slug: String!) @auth(level: NO_ACCESS) {
+  playbookTemplates(
+    where: { slug: { eq: $slug } }
+    limit: 1
+  ) {
+    id
+    slug
+    name
+    description
+    complexity
+    estimatedDays
+    fitCriteria
+    playbookTemplateBlocks_on_template(orderBy: { sortOrder: ASC }) {
+      sortOrder
+      durationOverride
+      isRequired
+      block {
+        id
+        slug
+        name
+        description
+        ownerSide
+        typicalDays
+        minDays
+        maxDays
+        category
+        prerequisites
+        tags
+      }
+    }
+  }
+}
+
+# Get templates by complexity (for AI selection)
+query GetPlaybookTemplatesByComplexity($complexity: PlaybookComplexity!) @auth(level: NO_ACCESS) {
+  playbookTemplates(
+    where: {
+      isActive: { eq: true }
+      complexity: { eq: $complexity }
+    }
+    orderBy: { estimatedDays: ASC }
+  ) {
+    id
+    slug
+    name
+    description
+    complexity
+    estimatedDays
+    fitCriteria
+    playbookTemplateBlocks_on_template(orderBy: { sortOrder: ASC }) {
+      sortOrder
+      durationOverride
+      isRequired
+      block {
+        slug
+        name
+        ownerSide
+        typicalDays
+        category
+      }
+    }
+  }
+}
+
+# ============================================================================
+# WORKSPACE INTEGRATIONS
+# ============================================================================
+
+# List all integrations for a workspace
+query GetWorkspaceIntegrations($workspaceId: UUID!) @auth(level: USER) {
+  workspaceIntegrations(
+    where: { workspace: { id: { eq: $workspaceId } } }
+    orderBy: { integrationType: ASC }
+  ) {
+    integrationType
+    status
+    config
+    lastSyncAt
+    lastError
+    errorCount
+    createdAt
+    updatedAt
+    connectedByUser {
+      id
+      displayName
+      email
+    }
+  }
+}
+
+# Get a specific integration by type
+query GetWorkspaceIntegration($workspaceId: UUID!, $integrationType: IntegrationType!) @auth(level: USER) {
+  workspaceIntegrations(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      integrationType: { eq: $integrationType }
+    }
+    limit: 1
+  ) {
+    integrationType
+    accessToken
+    refreshToken
+    tokenExpiresAt
+    status
+    config
+    lastSyncAt
+    lastError
+    errorCount
+    createdAt
+    updatedAt
+    connectedByUser {
+      id
+      displayName
+    }
+  }
+}
+
+# ============================================================================
+# OAUTH STATE MANAGEMENT
+# ============================================================================
+
+# Get OAuth state by state string (for callback validation)
+query GetOAuthState($state: String!) @auth(level: NO_ACCESS) {
+  oAuthStates(where: { state: { eq: $state } }, limit: 1) {
+    id
+    state
+    workspaceId
+    integrationType
+    userId
+    redirectUri
+    codeVerifier
+    expiresAt
+    consumed
+    createdAt
+  }
+}
+
+# Get all workspaces with active integration of a specific type (for polling)
+query GetActiveIntegrationWorkspaces($integrationType: IntegrationType!) @auth(level: NO_ACCESS) {
+  workspaceIntegrations(
+    where: {
+      integrationType: { eq: $integrationType }
+      status: { eq: active }
+    }
+  ) {
+    workspace {
+      id
+    }
+    integrationType
+    lastSyncAt
+  }
+}
+
+# Get workspace by Slack team ID (for webhook→workspace lookup)
+query GetWorkspaceBySlackTeamId($slackTeamId: String!) @auth(level: NO_ACCESS) {
+  workspaceIntegrations(
+    where: {
+      slackTeamId: { eq: $slackTeamId }
+    }
+    limit: 1
+  ) {
+    workspace {
+      id
+    }
+  }
+}
+
+# ============================================================================
+# CUSTOMER QUERIES
+# ============================================================================
+
+# Get customer by slug (useful for handoff flows)
+query GetCustomerBySlug($workspaceId: UUID!, $slug: String!) @auth(level: USER) {
+  customers(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      slug: { eq: $slug }
+    }
+    limit: 1
+  ) {
+    id
+    name
+    slug
+    oneLiner
+    tier
+    arrCents
+    lifecycle
+    daysToRenewal
+    onboardingDayCurrent
+    onboardingDayTotal
+    createdAt
+    updatedAt
+  }
+}
+
+# Get customer by external ID (for checking if Notion page already imported)
+query GetCustomerByExternalId($workspaceId: UUID!, $externalId: String!) @auth(level: NO_ACCESS) {
+  customers(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      externalId: { eq: $externalId }
+    }
+    limit: 1
+  ) {
+    id
+    name
+    externalId
+    externalSource
+  }
+}
+
+# ============================================================================
+# AGENT MEMORY QUERIES
+# ============================================================================
+
+# Get past AI plans for a workspace (for agent memory/learning)
+query GetPastPlans($workspaceId: UUID!, $customerId: UUID, $limit: Int = 10) @auth(level: NO_ACCESS) {
+  aiPlans(
+    where: {
+      _and: [
+        { workspace: { id: { eq: $workspaceId } } }
+        { _or: [
+          { customer: { id: { isNull: true } } }
+          { customer: { id: { eq: $customerId } } }
+        ]}
+      ]
+    }
+    orderBy: { createdAt: DESC }
+    limit: $limit
+  ) {
+    id
+    headline
+    status
+    milestoneCount
+    durationLabel
+    archetypeName
+    humanEdited
+    createdAt
+    approvedAt
+    customer {
+      id
+      name
+      tier
+      arrCents
+    }
+  }
+}
+
+# Get pending AI plans for a workspace (for HITL approval UI)
+query GetPendingPlans($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  aiPlans(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      status: { eq: pending_approval }
+    }
+    orderBy: { createdAt: DESC }
+  ) {
+    id
+    headline
+    status
+    milestoneCount
+    durationLabel
+    archetypeName
+    humanEdited
+    createdAt
+    customer {
+      id
+      name
+      tier
+      arrCents
+    }
+  }
+}
+
+# Get similar customers by tier and ARR range (for agent memory)
+query GetSimilarCustomers($workspaceId: UUID!, $tier: String, $arrLow: Int64, $arrHigh: Int64, $limit: Int = 5) @auth(level: NO_ACCESS) {
+  customers(
+    where: {
+      _and: [
+        { workspace: { id: { eq: $workspaceId } } }
+        { arrCents: { ge: $arrLow } }
+        { arrCents: { le: $arrHigh } }
+      ]
+    }
+    orderBy: { createdAt: DESC }
+    limit: $limit
+  ) {
+    id
+    name
+    tier
+    arrCents
+    lifecycle
+  }
+}
+
+# Get completed agent runs with HITL patterns (for agent learning)
+query GetHitlPatterns($workspaceId: UUID!, $agentName: String, $limit: Int = 20) @auth(level: NO_ACCESS) {
+  agentRuns(
+    where: {
+      _and: [
+        { workspace: { id: { eq: $workspaceId } } }
+        { status: { eq: completed } }
+        { pauseReason: { isNull: false } }
+        { _or: [
+          { agentName: { isNull: true } }
+          { agentName: { eq: $agentName } }
+        ]}
+      ]
+    }
+    orderBy: { createdAt: DESC }
+    limit: $limit
+  ) {
+    id
+    agentName
+    pauseReason
+    clarifyingQuestions
+    resumeAnswers
+    createdAt
+  }
+}
+
+# Get workspace agent settings (autonomy mode, etc.)
+query GetWorkspaceAgentSettings($workspaceId: UUID!, $agentName: String) @auth(level: NO_ACCESS) {
+  workspaceAgentSettings(
+    where: {
+      _and: [
+        { workspace: { id: { eq: $workspaceId } } }
+        { _or: [
+          { agentName: { isNull: true } }
+          { agentName: { eq: $agentName } }
+        ]}
+      ]
+    }
+  ) {
+    agentName
+    autonomyMode
+    pauseOnMediumConfidence
+    questionTimeoutHours
+    fallbackOnTimeout
+    notifyOnPause
+    notifyOnComplete
+    enabled
+  }
+}
+
+# Get agent run by blocking need ID
+query GetAgentRunByBlockingNeed($blockingNeedId: UUID!) @auth(level: NO_ACCESS) {
+  agentRuns(
+    where: { blockingNeed: { id: { eq: $blockingNeedId } } }
+    orderBy: { createdAt: DESC }
+    limit: 1
+  ) {
+    id
+    workspace { id }
+    agentName
+    status
+  }
+}
+
+# Get need recommendation by need ID
+query GetNeedRecommendation($needId: UUID!) @auth(level: NO_ACCESS) {
+  needRecommendations(
+    where: { need: { id: { eq: $needId } } }
+    orderBy: { generatedAt: DESC }
+    limit: 1
+  ) {
+    id
+    rationale
+    primaryAction
+    secondaryAction
+    confidenceText
+  }
+}
+
+# ============================================================================
+# CHANGE EVENT QUERIES (Unified Ingestion Pipeline)
+# ============================================================================
+
+# Get change event by fingerprint for dedup
+query GetChangeEventByFingerprint($workspaceId: UUID!, $fingerprint: String!) @auth(level: NO_ACCESS) {
+  changeEvents(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      fingerprint: { eq: $fingerprint }
+    }
+    limit: 1
+  ) {
+    id
+    processed
+    processedAt
+  }
+}
+
+# Get unprocessed change events for batch processing
+query GetUnprocessedChangeEvents($workspaceId: UUID!, $limit: Int = 100) @auth(level: NO_ACCESS) {
+  changeEvents(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      processed: { eq: false }
+    }
+    orderBy: { occurredAt: ASC }
+    limit: $limit
+  ) {
+    id
+    source
+    sourceEventType
+    sourceRecordId
+    fingerprint
+    rawPayload
+    occurredAt
+    customer {
+      id
+    }
+  }
+}
+
+# Get change event by ID (for test results)
+query GetChangeEventById($id: UUID!) @auth(level: NO_ACCESS) {
+  changeEvent(id: $id) {
+    id
+    source
+    sourceEventType
+    sourceRecordId
+    fingerprint
+    processed
+    processedAt
+    processingError
+    eventClass
+    artifactsCreated
+    rawPayload
+    occurredAt
+    customer {
+      id
+      name
+    }
+    workspace {
+      id
+      name
+    }
+  }
+}
+
+# ============================================================================
+# STAKEHOLDER QUERIES (Customer Resolution)
+# ============================================================================
+
+# Get stakeholder by email (for customer resolution)
+query GetStakeholderByEmail($workspaceId: UUID!, $email: String!) @auth(level: NO_ACCESS) {
+  stakeholders(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      email: { eq: $email }
+      status: { eq: active }
+    }
+    limit: 1
+  ) {
+    id
+    customer {
+      id
+    }
+  }
+}
+
+# Get customer by domain (for customer resolution)
+query GetCustomerByDomain($workspaceId: UUID!, $domain: String!) @auth(level: NO_ACCESS) {
+  customers(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      domain: { eq: $domain }
+    }
+    limit: 1
+  ) {
+    id
+    name
+    domain
+  }
+}
+
+# Get thread by subject (for interaction matching)
+# Note: Thread doesn't have externalThreadId - matching happens via Interaction.externalRef
+query GetThreadBySubject($workspaceId: UUID!, $subject: String!) @auth(level: NO_ACCESS) {
+  threads(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      subject: { eq: $subject }
+    }
+    limit: 1
+  ) {
+    id
+    need {
+      id
+    }
+  }
+}
+
+# ============================================================================
+# AGENT STATE QUERIES (Watermarks, etc.)
+# ============================================================================
+
+# Get agent state value (for watermarks)
+query GetAgentState($workspaceId: UUID!, $key: String!) @auth(level: NO_ACCESS) {
+  agentStates(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      key: { eq: $key }
+    }
+    limit: 1
+  ) {
+    key
+    value
+    updatedAt
+  }
+}
+
+# Get latest handbook version for a workspace
+query GetLatestHandbookVersion($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  handbookVersions(
+    where: {
+      doc: { workspace: { id: { eq: $workspaceId } } }
+    }
+    orderBy: { editedAt: DESC }
+    limit: 1
+  ) {
+    id
+    editedAt
+    doc {
+      id
+      slug
+    }
+  }
+}
+
+# ============================================================================
+# NOTION PROCESSED DEALS
+# ============================================================================
+
+# Check if a Notion deal has been processed
+query CheckProcessedDeal($workspaceId: UUID!, $notionDealId: String!) @auth(level: NO_ACCESS) {
+  processedDeals(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      notionDealId: { eq: $notionDealId }
+    }
+    limit: 1
+  ) {
+    id
+    notionDealId
+    status
+    processedAt
+  }
+}
+
+# Get list of processed deals with customer names
+query GetProcessedDeals($workspaceId: UUID!, $limit: Int!, $offset: Int!) @auth(level: NO_ACCESS) {
+  processedDeals(
+    where: { workspace: { id: { eq: $workspaceId } } }
+    orderBy: { processedAt: DESC }
+    limit: $limit
+    offset: $offset
+  ) {
+    id
+    notionDealId
+    status
+    skipReason
+    processedAt
+    agentRun {
+      id
+      agentName
+    }
+    customer {
+      id
+      name
+    }
+    brief {
+      id
+    }
+  }
+}
+
+# ============================================================================
+# AGENT RUN LISTING (for routes)
+# ============================================================================
+
+# Get agent run workspace ID (lightweight query for resume operations)
+query GetAgentRunWorkspace($id: UUID!) @auth(level: NO_ACCESS) {
+  agentRun(id: $id) {
+    id
+    workspace {
+      id
+    }
+  }
+}
+
+# List agent runs for a workspace with optional filters
+query ListAgentRunsForWorkspace(
+  $workspaceId: UUID!
+  $agentName: String
+  $status: AgentStatus
+  $limit: Int
+) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  agentRuns(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      agentName: { eq: $agentName }
+      status: { eq: $status }
+    }
+    orderBy: { createdAt: DESC }
+    limit: $limit
+  ) {
+    id
+    agentName
+    status
+    triggerType
+    currentStep
+    pausedAt
+    startedAt
+    completedAt
+    errorMessage
+    clarifyingQuestions
+    customer {
+      id
+      name
+    }
+    brief {
+      id
+    }
+    plan {
+      id
+    }
+  }
+}
+
+# ============================================================================
+# SIGNAL MATCHING QUERIES
+# ============================================================================
+
+# Find interaction by external message ID (for reply-to matching)
+query FindInteractionByExternalRef(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $messageId: String!
+) @auth(level: NO_ACCESS) {
+  interactions(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      externalRef: { contains: $messageId }
+    }
+    limit: 1
+  ) {
+    id
+    thread {
+      id
+      subject
+    }
+  }
+}
+
+# Get interactions by source event ID (for linking threads to needs)
+query GetInteractionsBySourceEvent(
+  $workspaceId: UUID!
+  $sourceEventId: String!
+) @auth(level: NO_ACCESS) {
+  interactions(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      sourceEventId: { eq: $sourceEventId }
+    }
+    limit: 10
+  ) {
+    id
+    thread {
+      id
+    }
+  }
+}
+
+# Find thread by origin detail (for external thread ID matching)
+query FindThreadByOriginDetail(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $originDetail: String!
+) @auth(level: NO_ACCESS) {
+  threads(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      originDetail: { eq: $originDetail }
+    }
+    limit: 1
+  ) {
+    id
+    subject
+  }
+}
+
+# Find recent open threads for customer (for inferred matching)
+query FindRecentOpenThreads(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $afterDate: Timestamp!
+  $limit: Int
+) @auth(level: NO_ACCESS) {
+  threads(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      status: { eq: open }
+      createdAt: { gt: $afterDate }
+    }
+    orderBy: { createdAt: DESC }
+    limit: $limit
+  ) {
+    id
+    subject
+    createdAt
+  }
+}
+
+# Get need by thread
+query GetNeedByThread(
+  $threadId: UUID!
+  $workspaceId: UUID!
+) @auth(level: NO_ACCESS) {
+  threads(
+    where: {
+      id: { eq: $threadId }
+      workspace: { id: { eq: $workspaceId } }
+    }
+    limit: 1
+  ) {
+    need {
+      id
+      type
+      headline
+      resolvedAt
+    }
+  }
+}
+
+# Get customer interaction history
+query GetCustomerInteractions(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $limit: Int
+) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  interactions(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+    }
+    orderBy: { occurredAt: DESC }
+    limit: $limit
+  ) {
+    id
+    channel
+    direction
+    senderName
+    subject
+    bodyEncrypted
+    summaryAi
+    occurredAt
+    thread {
+      id
+      subject
+    }
+  }
+}
+
+# Find open need by type for customer
+query FindOpenNeedByType(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $needType: NeedType!
+) @auth(level: NO_ACCESS) {
+  needs(
+    where: {
+      _and: [
+        { workspace: { id: { eq: $workspaceId } } }
+        { customer: { id: { eq: $customerId } } }
+        { type: { eq: $needType } }
+        { resolvedAt: { isNull: true } }
+        { _or: [
+          { snoozedUntil: { isNull: true } }
+          { snoozedUntil: { lt_expr: "request.time" } }
+        ]}
+      ]
+    }
+    orderBy: { createdAt: DESC }
+    limit: 1
+  ) {
+    id
+    type
+    headline
+  }
+}
+
+# Get recent threads for customer
+query GetRecentThreadsForCustomer(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $limit: Int
+) @auth(level: NO_ACCESS) {
+  threads(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+    }
+    orderBy: { updatedAt: DESC }
+    limit: $limit
+  ) {
+    id
+    subject
+    status
+    createdAt
+    updatedAt
+  }
+}
+
+# ============================================================================
+# SIGNAL DEDUPLICATION
+# ============================================================================
+
+# Check if signal fingerprint exists (for deduplication)
+query GetSignalFingerprint($workspaceId: UUID!, $fingerprint: String!) @auth(level: NO_ACCESS) {
+  signalFingerprint(key: { workspaceId: $workspaceId, fingerprint: $fingerprint }) {
+    fingerprint
+    processedAt
+  }
+}
+
+# ============================================================================
+# GMAIL INTEGRATION
+# ============================================================================
+
+# Get all active Gmail integrations (for webhook processing)
+query GetActiveGmailIntegrations @auth(level: NO_ACCESS) {
+  workspaceIntegrations(
+    where: {
+      integrationType: { eq: gmail }
+      status: { eq: active }
+    }
+  ) {
+    workspace {
+      id
+      domain
+    }
+    config
+    lastSyncAt
+  }
+}
+
+# Get active calendar integrations
+query GetActiveCalendarIntegrations @auth(level: NO_ACCESS) {
+  workspaceIntegrations(
+    where: {
+      integrationType: { eq: calendar }
+      status: { eq: active }
+    }
+  ) {
+    workspace {
+      id
+      domain
+    }
+    config
+    lastSyncAt
+  }
+}
+
+# Get thread by external thread ID (Gmail thread_id, Slack thread_ts, etc.)
+query GetThreadByExternalId(
+  $workspaceId: UUID!
+  $externalThreadId: String!
+) @auth(level: NO_ACCESS) {
+  threads(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      externalThreadId: { eq: $externalThreadId }
+    }
+  ) {
+    id
+    customer {
+      id
+      name
+    }
+    need {
+      id
+    }
+    subject
+    status
+    threadType
+    channel
+    externalThreadId
+    createdAt
+  }
+}
+
+# ============================================================================
+# SIGNAL CLASSIFICATION
+# ============================================================================
+
+# Get recent signals for a customer (for LLM context)
+query GetRecentSignalsForCustomer(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $since: Timestamp!
+) @auth(level: NO_ACCESS) {
+  signals(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      generatedAt: { ge: $since }
+    }
+    orderBy: { generatedAt: DESC }
+    limit: 10
+  ) {
+    id
+    kind
+    state
+    sentence
+    generatedAt
+  }
+}
+
+# Get sentiment signals for trend analysis (used by SentimentTrendService)
+query GetSentimentSignalsForTrend(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $since: Timestamp!
+) @auth(level: NO_ACCESS) {
+  signals(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      kind: { eq: sentiment }
+      generatedAt: { ge: $since }
+      supersededAt: { isNull: true }
+    }
+    orderBy: { generatedAt: ASC }
+    limit: 50
+  ) {
+    id
+    state
+    sentence
+    evidenceText
+    generatedAt
+  }
+}
+
+# Get all active signals for health scoring (includes engagement, commitments)
+query GetActiveSignalsForHealth(
+  $customerId: UUID!
+  $since: Timestamp!
+) @auth(level: NO_ACCESS) {
+  signals(
+    where: {
+      customer: { id: { eq: $customerId } }
+      generatedAt: { ge: $since }
+      supersededAt: { isNull: true }
+    }
+    orderBy: { generatedAt: DESC }
+    limit: 100
+  ) {
+    id
+    kind
+    state
+    sentence
+    evidenceText
+    generatedAt
+    supersededAt
+  }
+}
+
+# Get interactions for engagement trend analysis (used by EngagementTrendService)
+query GetInteractionsForEngagementTrend(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $since: Timestamp!
+) @auth(level: NO_ACCESS) {
+  interactions(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      occurredAt: { ge: $since }
+    }
+    orderBy: { occurredAt: ASC }
+    limit: 200
+  ) {
+    id
+    channel
+    direction
+    occurredAt
+  }
+}
+
+# Get signal by fingerprint (for deduplication)
+query GetSignalByFingerprint(
+  $workspaceId: UUID!
+  $fingerprint: String!
+) @auth(level: NO_ACCESS) {
+  signals(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      inputsHash: { eq: $fingerprint }
+    }
+    limit: 1
+  ) {
+    id
+    generatedAt
+  }
+}
+
+# ============================================================================
+# WAITLIST
+# ============================================================================
+
+# Check if email is already on waitlist
+query CheckWaitlistEmail($email: String!) @auth(level: NO_ACCESS) {
+  waitlistSignups(where: { email: { eq: $email } }, limit: 1) {
+    id
+    email
+    signedUpAt
+  }
+}
+
+# ============================================================================
+# AI NATIVE SYSTEM - SIDEKICK
+# ============================================================================
+
+# Get count of unanswered sidekick questions (for nav badge)
+query GetSidekickUnansweredCount($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  sidekickItems(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      type: { eq: asking }
+      resolvedAt: { isNull: true }
+    }
+  ) {
+    id
+  }
+}
+
+# Get all unresolved asking items workspace-wide (for Today queue integration)
+query GetSidekickAskingItems($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  sidekickItems(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      type: { eq: asking }
+      resolvedAt: { isNull: true }
+    }
+    orderBy: [{ isBlocking: DESC }, { createdAt: DESC }]
+  ) {
+    id
+    question
+    why
+    isBlocking
+    createdAt
+    customer {
+      id
+      name
+      slug
+      tier
+      arrCents
+      lifecycle
+    }
+    agentRun {
+      id
+      agentName
+      status
+      clarifyingQuestions
+      pauseReason
+    }
+    need {
+      id
+      headline
+    }
+  }
+}
+
+# Get sidekick alert data for a customer (for contextual banner)
+query GetSidekickAlert($workspaceId: UUID!, $customerId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  sidekickItems(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      type: { eq: asking }
+      resolvedAt: { isNull: true }
+    }
+    orderBy: [{ isBlocking: DESC }, { createdAt: ASC }]
+  ) {
+    id
+    question
+    why
+    isBlocking
+    createdAt
+    agentRun {
+      id
+    }
+  }
+}
+
+# Get all sidekick items for a customer (for right rail clustering)
+query GetSidekickItems($workspaceId: UUID!, $customerId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  # Get the customer info including health and signals
+  customer(id: $customerId) {
+    # RBAC: abort if this customer doesn't belong to the gated $workspaceId — prevents reading a
+    # foreign workspace's customer record by pairing its customerId with a workspace you ARE in.
+    workspaceId @check(expr: "this == vars.workspaceId", message: "Customer not in this workspace")
+    id
+    name
+    slug
+    tier
+    arrCents
+    lifecycle
+    onboardingDayCurrent
+    onboardingDayTotal
+    # Health data for right rail
+    relationshipHealth
+    relationshipHealthScore
+    relationshipHealthUpdatedAt
+    # Latest signals for sentiment/momentum display
+    signals_on_customer(
+      where: { supersededAt: { isNull: true } }
+      limit: 5
+    ) {
+      id
+      kind
+      state
+      sentence
+    }
+  }
+
+  # Get all sidekick items for this customer
+  sidekickItems(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+    }
+    orderBy: [{ resolvedAt: ASC }, { createdAt: DESC }]
+  ) {
+    id
+    type
+    text
+    question
+    why
+    isBlocking
+    task
+    step
+    stepNum
+    totalSteps
+    resolution
+    resolvedByUser {
+      id
+      displayName
+    }
+    resolvedAt
+    timestampLabel
+    agentRun {
+      id
+      agentName
+      status
+    }
+    need {
+      id
+      headline
+    }
+    createdAt
+    updatedAt
+  }
+}
+
+# Get a single sidekick item by ID
+query GetSidekickItem($id: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to the sidekickItem's workspace (redacted; aborts read if not).
+  _membership: sidekickItem(id: $id) @redact @check(expr: "this != null", message: "Sidekick item not found") {
+    workspace {
+      workspaceMembers_on_workspace(
+        where: { userId: { eq_expr: "auth.uid" } }
+        limit: 1
+      ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+        role
+      }
+    }
+  }
+  sidekickItem(id: $id) {
+    id
+    type
+    text
+    question
+    why
+    isBlocking
+    task
+    step
+    stepNum
+    totalSteps
+    resolution
+    resolvedByUser {
+      id
+      displayName
+    }
+    resolvedAt
+    timestampLabel
+    workspace {
+      id
+    }
+    agentRun {
+      id
+      agentName
+      status
+      customer {
+        id
+        name
+      }
+    }
+    need {
+      id
+      headline
+    }
+    customer {
+      id
+      name
+      tier
+      arrCents
+      lifecycle
+    }
+    createdAt
+    updatedAt
+  }
+}
+
+# Get sidekick items by agent run ID (for auto-resolve on answer submission)
+query GetSidekickItemsByAgentRun($agentRunId: UUID!) @auth(level: NO_ACCESS) {
+  sidekickItems(
+    where: {
+      agentRun: { id: { eq: $agentRunId } }
+    }
+  ) {
+    id
+    type
+    question
+    why
+    isBlocking
+    resolvedAt
+    customer {
+      id
+      name
+    }
+  }
+}
+
+# ============================================================================
+# AGENT TOOLS - Dedicated queries for autonomous agents
+# ============================================================================
+
+# Get customer goals (for agent context assessment)
+# Note: workspaceId required for multi-tenant security even though goals are accessed via customer
+query GetCustomerGoals($customerId: UUID!, $workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  goals(
+    where: {
+      customer: { id: { eq: $customerId } }
+      workspace: { id: { eq: $workspaceId } }
+    }
+    orderBy: { sortOrder: ASC }
+  ) {
+    id
+    text
+    status
+    sortOrder
+    isPrimary
+    createdAt
+  }
+}
+
+# Get milestones linked to a specific goal
+query GetMilestonesForGoal($goalId: UUID!) @auth(level: NO_ACCESS) {
+  milestones(
+    where: { goal: { id: { eq: $goalId } } }
+    orderBy: { sortOrder: ASC }
+  ) {
+    id
+    title
+    description
+    ownerSide
+    targetDate
+    status
+    sortOrder
+    goalRationale
+  }
+}
+
+# Get goals with their linked milestones for a customer
+query GetGoalsWithMilestones($customerId: UUID!, $workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  goals(
+    where: {
+      customer: { id: { eq: $customerId } }
+      workspace: { id: { eq: $workspaceId } }
+    }
+    orderBy: [{ isPrimary: DESC }, { sortOrder: ASC }]
+  ) {
+    id
+    text
+    status
+    sortOrder
+    isPrimary
+    source
+    sourceType
+    sourceDate
+    createdAt
+    # Get milestones linked to this goal
+    milestones_on_goal {
+      id
+      title
+      description
+      ownerSide
+      targetDate
+      status
+      sortOrder
+      goalRationale
+    }
+  }
+}
+
+# Get handbook doc by slug (for agent guide lookup)
+query GetHandbookDocBySlug($workspaceId: UUID!, $slug: String!) @auth(level: NO_ACCESS) {
+  handbookDocs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      slug: { eq: $slug }
+    }
+    limit: 1
+  ) {
+    id
+    slug
+    title
+    body
+    description
+    blastRadius
+  }
+}
+
+# Get workspace value prop (for agent context)
+query GetWorkspaceValueProp($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  workspace(id: $workspaceId) {
+    id
+    name
+    valueProp
+    setupCompleted
+  }
+}
+
+# ============================================================================
+# CUSTOMER HEALTH & GOAL OBSERVATIONS
+# ============================================================================
+
+# Get customer health data
+query GetCustomerHealth($customerId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to the customer's workspace (redacted; aborts read if not).
+  _membership: customer(id: $customerId) @redact @check(expr: "this != null", message: "Customer not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  customer(id: $customerId) {
+    id
+    name
+    clientSignedDate
+    relationshipHealth
+    relationshipHealthScore
+    relationshipHealthUpdatedBy
+    relationshipHealthUpdatedAt
+    relationshipHealthReason
+  }
+}
+
+# ============================================================================
+# PROGRESS VECTORS
+# ============================================================================
+
+# Get progress vectors for a specific goal
+query GetProgressVectorsForGoal($goalId: UUID!) @auth(level: NO_ACCESS) {
+  progressVectors(
+    where: { goal: { id: { eq: $goalId } } }
+    orderBy: { category: ASC }
+  ) {
+    id
+    category
+    description
+    currentState
+    progress
+    targetProgress
+    targetLabel
+    unlocks
+    assessmentReason
+    lastAssessedAt
+    lastAssessedBy
+  }
+}
+
+# Get all progress vectors for a customer (across all goals)
+query GetCustomerProgressVectors($customerId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to the customer's workspace (redacted; aborts read if not).
+  _membership: customer(id: $customerId) @redact @check(expr: "this != null", message: "Customer not found") {
+    workspace {
+      workspaceMembers_on_workspace(
+        where: { userId: { eq_expr: "auth.uid" } }
+        limit: 1
+      ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+        role
+      }
+    }
+  }
+  progressVectors(
+    where: { customer: { id: { eq: $customerId } } }
+    orderBy: [{ goal: { isPrimary: DESC } }, { category: ASC }]
+  ) {
+    id
+    category
+    description
+    currentState
+    progress
+    targetProgress
+    targetLabel
+    unlocks
+    assessmentReason
+    lastAssessedAt
+    lastAssessedBy
+    goal {
+      id
+      text
+      isPrimary
+    }
+  }
+}
+
+# Get progress vectors summary by state (for dashboard)
+query GetProgressVectorsSummary($customerId: UUID!) @auth(level: NO_ACCESS) {
+  # All vectors for the customer - client can aggregate by state
+  progressVectors(
+    where: { customer: { id: { eq: $customerId } } }
+  ) {
+    id
+    category
+    currentState
+    progress
+    goal {
+      id
+      isPrimary
+    }
+  }
+}
+
+# ============================================================================
+# TODAY'S WORKLIST
+# ============================================================================
+
+# Get worklist items for today across all customers (milestones due soon with goal linkage)
+query GetTodayWorklist($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  # Get all pending/in-progress milestones across active goals
+  milestones(
+    where: {
+      goal: {
+        workspace: { id: { eq: $workspaceId } }
+        status: { eq: active }
+      }
+      status: { in: [not_started, in_progress, blocked] }
+    }
+    orderBy: [{ targetDate: ASC }, { sortOrder: ASC }]
+    limit: 30
+  ) {
+    id
+    title
+    description
+    ownerSide
+    targetDate
+    status
+    sortOrder
+    goalId
+    goalRationale
+    goal {
+      id
+      text
+      isPrimary
+      status
+      customer {
+        id
+        name
+        slug
+        lifecycle
+        arrCents
+      }
+    }
+  }
+}
+
+# Get primary goals across the workspace (for today header stats)
+query GetWorkspacePrimaryGoals($workspaceId: UUID!) @auth(level: USER) {
+  goals(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      isPrimary: { eq: true }
+      status: { eq: active }
+    }
+    orderBy: { createdAt: DESC }
+    limit: 50
+  ) {
+    id
+    text
+    status
+    isPrimary
+    customer {
+      id
+      name
+      slug
+      lifecycle
+    }
+    milestones_on_goal: milestones_on_goal {
+      id
+      status
+    }
+  }
+}
+
+# ============================================================================
+# CUSTOMER STRATEGY
+# ============================================================================
+
+# Get customer strategy (living strategy document)
+query GetCustomerStrategy($customerId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to the customer's workspace (redacted; aborts read if not).
+  _membership: customer(id: $customerId) @redact @check(expr: "this != null", message: "Customer not found") {
+    workspace {
+      workspaceMembers_on_workspace(
+        where: { userId: { eq_expr: "auth.uid" } }
+        limit: 1
+      ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+        role
+      }
+    }
+  }
+  customerStrategies(
+    where: { customer: { id: { eq: $customerId } } }
+    limit: 1
+  ) {
+    id
+    body
+    lastUpdatedBy
+    createdAt
+    updatedAt
+  }
+}
+
+# Get customer strategy with full customer context
+query GetCustomerStrategyWithContext($customerId: UUID!) @auth(level: NO_ACCESS) {
+  customerStrategies(
+    where: { customer: { id: { eq: $customerId } } }
+    limit: 1
+  ) {
+    id
+    body
+    lastUpdatedBy
+    createdAt
+    updatedAt
+    customer {
+      id
+      name
+      slug
+      lifecycle
+      goals_on_customer(orderBy: [{ isPrimary: DESC }, { sortOrder: ASC }]) {
+        id
+        text
+        isPrimary
+        status
+      }
+    }
+  }
+}
+
+# ============================================================================
+# GOAL OBSERVATIONS
+# ============================================================================
+
+# Get goal observations for a specific goal
+query GetGoalObservations($goalId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: goal(id: $goalId) @redact @check(expr: "this != null", message: "Goal not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  goalObservations(
+    where: { goal: { id: { eq: $goalId } } }
+    orderBy: { observedAt: DESC }
+  ) {
+    id
+    text
+    confidence
+    sourceType
+    observedAt
+    fingerprint
+    status
+    sourceInteraction {
+      id
+      summaryAi
+      senderName
+      occurredAt
+      channel
+    }
+    createdAt
+  }
+}
+
+# Get all goal observations for a customer (across all goals)
+query GetCustomerGoalObservations($customerId: UUID!, $status: ObservationStatus) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to the customer's workspace (redacted; aborts read if not).
+  _membership: customer(id: $customerId) @redact @check(expr: "this != null", message: "Customer not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  goalObservations(
+    where: {
+      customer: { id: { eq: $customerId } }
+      status: { eq: $status }
+    }
+    orderBy: { observedAt: DESC }
+    limit: 50
+  ) {
+    id
+    text
+    confidence
+    sourceType
+    observedAt
+    status
+    goal {
+      id
+      text
+      status
+    }
+    sourceInteraction {
+      id
+      summaryAi
+      senderName
+      occurredAt
+    }
+  }
+}
+
+# Check if observation fingerprint already exists (deduplication)
+query CheckObservationFingerprint($fingerprint: String!) @auth(level: NO_ACCESS) {
+  goalObservations(
+    where: { fingerprint: { eq: $fingerprint } }
+    limit: 1
+  ) {
+    id
+    status
+    observedAt
+  }
+}
+
+# Get goals with source attribution
+query GetGoalsWithSource($customerId: UUID!) @auth(level: USER) {
+  goals(
+    where: { customer: { id: { eq: $customerId } } }
+    orderBy: { sortOrder: ASC }
+  ) {
+    id
+    text
+    status
+    source
+    sourceType
+    sourceDate
+    sourceInteractionId
+    sourceThreadId
+    sortOrder
+    createdAt
+  }
+}
+
+# ============================================================================
+# HEALTH SCORING QUERIES
+# ============================================================================
+
+# Get customer signals for health scoring
+query GetCustomerSignals($customerId: UUID!) @auth(level: NO_ACCESS) {
+  customer(id: $customerId) {
+    signals_on_customer {
+      id
+      kind
+      state
+      sentence
+      evidenceText
+      generatedAt
+    }
+  }
+}
+
+# Get customer stakeholders for engagement assessment
+# Milestones (status + target date) for onboarding/milestone velocity.
+query GetCustomerMilestonesForVelocity($workspaceId: UUID!, $customerId: UUID!) @auth(level: NO_ACCESS) {
+  milestones(
+    where: { workspace: { id: { eq: $workspaceId } }, customer: { id: { eq: $customerId } } }
+    limit: 200
+  ) {
+    id
+    status
+    targetDate
+  }
+}
+
+# Commitments with timing fields for follow-through reliability (per side).
+query GetCustomerCommitmentsForReliability($workspaceId: UUID!, $customerId: UUID!) @auth(level: NO_ACCESS) {
+  commitments(
+    where: { workspace: { id: { eq: $workspaceId } }, customer: { id: { eq: $customerId } } }
+    limit: 200
+  ) {
+    id
+    side
+    status
+    dueDate
+    deliveredAt
+    createdAt
+  }
+}
+
+query GetCustomerStakeholders($customerId: UUID!) @auth(level: NO_ACCESS) {
+  customer(id: $customerId) {
+    stakeholders_on_customer {
+      id
+      name
+      role
+      status
+      lastInteractionAt
+      importance
+      isChampion
+    }
+  }
+}
+
+# Get all customers in a workspace (for bulk recalculation)
+query GetWorkspaceCustomers($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  customers(where: { workspaceId: { eq: $workspaceId } }) {
+    id
+    name
+  }
+}
+
+# ============================================================================
+# HANDOFF BRIEFS
+# ============================================================================
+
+# Get the latest handoff brief for a customer
+query GetLatestHandoffBriefForCustomer($customerId: UUID!) @auth(level: NO_ACCESS) {
+  handoffBriefs(
+    where: { customerId: { eq: $customerId } }
+    orderBy: { createdAt: DESC }
+    limit: 1
+  ) {
+    id
+    status
+    body
+    dayCurrent
+    dayTotal
+    salesCommitments
+    technicalContext
+    realityCheckConfidence
+    realityCheckRisks
+    notionDealId
+    notionDealUrl
+    createdAt
+  }
+}
+
+# Get the latest handoff brief AND plans for a customer (for Brief tab)
+query GetCustomerHandoffWithPlan($customerId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to the customer's workspace (redacted; aborts read if not).
+  _membership: customer(id: $customerId) @redact @check(expr: "this != null", message: "Customer not found") {
+    workspace {
+      workspaceMembers_on_workspace(
+        where: { userId: { eq_expr: "auth.uid" } }
+        limit: 1
+      ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+        role
+      }
+    }
+  }
+  handoffBriefs(
+    where: { customerId: { eq: $customerId } }
+    orderBy: { createdAt: DESC }
+    limit: 1
+  ) {
+    id
+    status
+    body
+    dayCurrent
+    dayTotal
+    salesCommitments
+    technicalContext
+    realityCheckConfidence
+    realityCheckRisks
+    notionDealId
+    notionDealUrl
+    createdAt
+    # Include open questions
+    handoffOpenQuestions_on_brief {
+      id
+      text
+      resolved
+      createdAt
+    }
+    # Include AI plans for this brief
+    aiPlans_on_brief(orderBy: { generatedAt: DESC }) {
+      id
+      archetypeName
+      milestoneCount
+      durationLabel
+      rationale
+      headline
+      milestones
+      status
+      humanEdited
+      regenerationCount
+      generatedAt
+      approvedByUser {
+        displayName
+      }
+      approvedAt
+      rejectionReason
+    }
+  }
+}
+
+# Get plans directly for a customer (not via brief relationship)
+# Use this when plans may be created without a handoff brief
+query GetCustomerPlans($customerId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to the customer's workspace (redacted; aborts read if not).
+  _membership: customer(id: $customerId) @redact @check(expr: "this != null", message: "Customer not found") {
+    workspace {
+      workspaceMembers_on_workspace(
+        where: { userId: { eq_expr: "auth.uid" } }
+        limit: 1
+      ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+        role
+      }
+    }
+  }
+  aiPlans(
+    where: { customer: { id: { eq: $customerId } } }
+    orderBy: { generatedAt: DESC }
+  ) {
+    id
+    archetypeName
+    milestoneCount
+    durationLabel
+    rationale
+    headline
+    milestones
+    status
+    humanEdited
+    regenerationCount
+    generatedAt
+    approvedByUser {
+      displayName
+    }
+    approvedAt
+    rejectionReason
+    brief {
+      id
+    }
+  }
+}
+
+# ============================================================================
+# SIDEKICK NEEDS (for Sidekick page)
+# ============================================================================
+
+# Get all unresolved sidekick_question needs for a workspace
+# This is the primary query for the Sidekick page - needs-based, not agent-run-based
+query GetSidekickQuestionNeeds($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  needs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      type: { eq: sidekick_question }
+      resolvedAt: { isNull: true }
+    }
+    orderBy: [{ priorityRank: ASC }, { createdAt: ASC }]
+  ) {
+    id
+    type
+    headline
+    lede
+    priorityRank
+    agentReasoning
+    createdAt
+    customer {
+      id
+      name
+      slug
+      lifecycle
+      arrCents
+      tier
+    }
+    agentRun {
+      id
+      agentName
+      status
+      currentStep
+      pausedAt
+      pauseReason
+      clarifyingQuestions
+    }
+  }
+}
+
+# ============================================================================
+# HANDOFF QUESTIONS (Side-asks and Kickoff items)
+# ============================================================================
+
+# Get handoff questions for a customer (by routing type)
+query GetHandoffQuestions($customerId: UUID!, $routing: String) @auth(level: NO_ACCESS) {
+  handoffQuestions(
+    where: {
+      customer: { id: { eq: $customerId } }
+      routing: { eq: $routing }
+    }
+    orderBy: { createdAt: ASC }
+  ) {
+    id
+    question
+    field
+    routing
+    proposedAnswer
+    relatesTo
+    status
+    answerText
+    answeredAt
+    createdAt
+    answeredBy {
+      id
+      displayName
+    }
+    agentRun {
+      id
+    }
+  }
+}
+
+# Get pending handoff questions for a customer (unanswered)
+query GetPendingHandoffQuestions($customerId: UUID!) @auth(level: NO_ACCESS) {
+  handoffQuestions(
+    where: {
+      customer: { id: { eq: $customerId } }
+      status: { eq: "pending" }
+    }
+    orderBy: { createdAt: ASC }
+  ) {
+    id
+    question
+    field
+    routing
+    proposedAnswer
+    relatesTo
+    createdAt
+  }
+}
+
+# ============================================================================
+# AI PLANS
+# ============================================================================
+
+# Get an AI plan by ID
+query GetAiPlan($id: UUID!) @auth(level: NO_ACCESS) {
+  aiPlan(id: $id) {
+    id
+    workspace {
+      id
+    }
+    customer {
+      id
+      name
+    }
+    brief {
+      id
+    }
+    archetypeName
+    milestoneCount
+    durationLabel
+    rationale
+    headline
+    milestones
+    status
+    approvedByUser {
+      id
+      displayName
+    }
+    approvedAt
+    rejectionReason
+    regeneratedFromPlanId
+    humanEdited
+    regenerationCount
+    generatedAt
+    model
+    promptVersion
+    inputsHash
+    createdAt
+    updatedAt
+  }
+}
+
+# Get existing pending plan for a customer (to avoid duplicates)
+query GetExistingPendingPlan($customerId: UUID!) @auth(level: NO_ACCESS) {
+  aiPlans(
+    where: {
+      customer: { id: { eq: $customerId } }
+      status: { eq: pending_approval }
+    }
+    orderBy: { createdAt: DESC }
+    limit: 1
+  ) {
+    id
+    headline
+    milestoneCount
+    createdAt
+  }
+}
+
+# ============================================================================
+# ORCHESTRATOR — AgentTask work queue (net-new, side-by-side with handoff_auto)
+# ============================================================================
+
+# Next eligible task to claim: pending + due (scheduledFor <= now), highest
+# priority first, then oldest. The repository then does a guarded optimistic
+# claim (ClaimAgentTask) since DataConnect has no SELECT ... FOR UPDATE SKIP LOCKED.
+query GetNextPendingAgentTask($workspaceId: UUID!, $now: Timestamp!) @auth(level: NO_ACCESS) {
+  agentTasks(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      status: { eq: pending }
+      scheduledFor: { le: $now }
+    }
+    orderBy: [{ priority: ASC }, { createdAt: ASC }]
+    limit: 1
+  ) {
+    id
+    taskType
+    triggerType
+    payload
+    status
+    priority
+    attempts
+    scheduledFor
+    customer {
+      id
+      name
+    }
+  }
+}
+
+query GetAgentTask($id: UUID!) @auth(level: NO_ACCESS) {
+  agentTask(id: $id) {
+    id
+    workspace { id }
+    customer { id name }
+    taskType
+    triggerType
+    payload
+    status
+    priority
+    attempts
+    scheduledFor
+    blockingNeed { id resolvedAt }
+    agentRun { id status }
+    result
+    errorMessage
+    claimedAt
+    completedAt
+    createdAt
+  }
+}
+
+# Demo support: list waiting tasks blocked on a need (resume after HITL answer)
+query GetWaitingAgentTaskForNeed($needId: UUID!) @auth(level: NO_ACCESS) {
+  agentTasks(
+    where: {
+      status: { eq: waiting }
+      blockingNeed: { id: { eq: $needId } }
+    }
+    limit: 1
+  ) {
+    id
+    payload
+    customer { id }
+    blockingNeed { id resolvedAt }
+  }
+}
+
+# Risk briefs for a customer (used by demo reset to find steps to delete, and by
+# CustomerDetail to render the Risk/Save play output).
+query GetRiskBriefsForCustomer($workspaceId: UUID!, $customerId: UUID!) @auth(level: NO_ACCESS) {
+  riskBriefs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+    }
+    orderBy: { createdAt: DESC }
+  ) {
+    id
+    whatChanged
+    evidenceText
+    play
+    createdAt
+  }
+}
+
+# Risk briefs for a customer WITH their save-play steps nested (used by CustomerDetail's
+# RiskSavePlayCard to render the full Risk/Save play output). Customer-scoped, user-authed.
+query GetRiskBriefsWithSteps($customerId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to the customer's workspace (redacted; aborts read if not).
+  _membership: customer(id: $customerId) @redact @check(expr: "this != null", message: "Customer not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  riskBriefs(
+    where: { customer: { id: { eq: $customerId } } }
+    orderBy: { createdAt: DESC }
+  ) {
+    id
+    whatChanged
+    evidenceText
+    play
+    generatedAt
+    createdAt
+    riskPlaySteps_on_brief(orderBy: { sortOrder: ASC }) {
+      id
+      label
+      rationale
+      done
+      notes
+      sortOrder
+    }
+  }
+}
+
+# Needs by source event (orchestrator idempotency + demo reset verification).
+query GetNeedsBySourceEvent($workspaceId: UUID!, $sourceEventId: String!) @auth(level: NO_ACCESS) {
+  needs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      sourceEventId: { eq: $sourceEventId }
+    }
+  ) {
+    id
+    type
+    headline
+    resolvedAt
+  }
+}
+
+# Best-fit RISK playbook for a workspace (orchestrator risk strategist adapts it).
+# Highest acceptance first, then most recently used. Additive: returns [] when the
+# workspace hasn't formalized a risk play, and the strategist falls back to generating.
+query GetRiskPlaybook($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  playbooks(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      scenario: { eq: risk }
+    }
+    orderBy: [{ timesAccepted: DESC }, { lastUsedAt: DESC }]
+    limit: 1
+  ) {
+    id
+    name
+    archetype
+    fitNote
+    timesUsed
+    timesAccepted
+    playbookMilestones_on_playbook(orderBy: { sortOrder: ASC }) {
+      title
+      description
+      ownerSide
+      sortOrder
+    }
+  }
+}
+
+# Risk briefs for a specific triggering event (orchestrator idempotency keyed per-event,
+# not per-customer — inputsHash carries the source_event_id).
+query GetRiskBriefByEvent($workspaceId: UUID!, $inputsHash: String!) @auth(level: NO_ACCESS) {
+  riskBriefs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      inputsHash: { eq: $inputsHash }
+    }
+    orderBy: { createdAt: DESC }
+    limit: 1
+  ) {
+    id
+    whatChanged
+    evidenceText
+    createdAt
+  }
+}
+
+# Demo meetings for a customer (by demo externalEventId tag) — used by demo reset.
+query GetDemoMeetings($workspaceId: UUID!, $customerId: UUID!, $externalEventId: String!) @auth(level: NO_ACCESS) {
+  meetings(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      externalEventId: { eq: $externalEventId }
+    }
+  ) {
+    id
+  }
+}
+
+# All due + pending tasks across workspaces (scheduler sweep finds which workspaces to drain).
+query GetDuePendingTasks($now: Timestamp!) @auth(level: NO_ACCESS) {
+  agentTasks(
+    where: { status: { eq: pending }, scheduledFor: { le: $now } }
+    orderBy: { priority: ASC }
+    limit: 200
+  ) {
+    id
+    workspace { id }
+  }
+}
+
+# ============================================================================
+# HUDDLES + fan-out Needs on a thread (conversation interface contract)
+# ============================================================================
+
+# All needs anchored to a thread (fan-out: a thread can carry several needs).
+query GetNeedsForThread($threadId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: thread(id: $threadId) @redact @check(expr: "this != null", message: "Thread not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  needs(
+    where: { thread: { id: { eq: $threadId } }, resolvedAt: { isNull: true } }
+    orderBy: { priorityRank: ASC }
+  ) {
+    id
+    type
+    headline
+    lede
+    priorityRank
+    createdAt
+  }
+}
+
+# Huddles on a thread (list) with message count + anchor.
+query GetThreadHuddles($threadId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: thread(id: $threadId) @redact @check(expr: "this != null", message: "Thread not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  huddles(
+    where: { thread: { id: { eq: $threadId } } }
+    orderBy: { createdAt: DESC }
+  ) {
+    id
+    title
+    status
+    anchorInteraction { id }
+    createdByUser { displayName }
+    createdAt
+    resolvedAt
+    huddleMessages_on_huddle(orderBy: { createdAt: ASC }) {
+      id
+      authorKind
+      authorUser { displayName }
+      body
+      mentions
+      createdAt
+    }
+  }
+}
+
+# One huddle with its messages (detail).
+query GetHuddle($id: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to this record's workspace (redacted; aborts read if not).
+  _membership: huddle(id: $id) @redact @check(expr: "this != null", message: "Huddle not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  huddle(id: $id) {
+    id
+    title
+    status
+    thread { id }
+    anchorInteraction { id }
+    createdByUser { displayName }
+    createdAt
+    resolvedAt
+    huddleMessages_on_huddle(orderBy: { createdAt: ASC }) {
+      id
+      authorKind
+      authorUser { id displayName }
+      body
+      mentions
+      createdAt
+    }
+  }
+}
+
+# Public variant for the orchestrator worker (huddle_reply handler reads the thread + context).
+query GetHuddlePublic($id: UUID!) @auth(level: NO_ACCESS) {
+  huddle(id: $id) {
+    id
+    status
+    workspace { id }
+    customer { id name }
+    thread { id }
+    huddleMessages_on_huddle(orderBy: { createdAt: ASC }) {
+      authorKind
+      authorUser { displayName }
+      body
+      mentions
+      createdAt
+    }
+  }
+}
+
+# ============================================================================
+# SWEEP QUERIES (background signal detection)
+# ============================================================================
+
+# Active + onboarding customers for sweep evaluation
+query GetCustomersForSweep($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  customers(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      lifecycle: { in: [active, onboarding, at_risk, renewing] }
+    }
+    orderBy: { createdAt: ASC }
+  ) {
+    id
+    name
+    lifecycle
+    arrCents
+  }
+}
+
+# Most recent inbound interaction for a customer (going-dark detection)
+query GetLastInboundInteraction(
+  $workspaceId: UUID!
+  $customerId: UUID!
+) @auth(level: NO_ACCESS) {
+  interactions(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      direction: { eq: customer }
+    }
+    orderBy: { occurredAt: DESC }
+    limit: 1
+  ) {
+    id
+    occurredAt
+  }
+}
+
+# Most recent OUTBOUND interaction in a thread before a timestamp — used to pair an
+# inbound reply to our last message and compute per-stakeholder response latency.
+query GetLastOutboundInThreadBefore(
+  $threadId: UUID!
+  $before: Timestamp!
+) @auth(level: NO_ACCESS) {
+  interactions(
+    where: {
+      thread: { id: { eq: $threadId } }
+      direction: { eq: us }
+      occurredAt: { lt: $before }
+    }
+    orderBy: { occurredAt: DESC }
+    limit: 1
+  ) {
+    id
+    occurredAt
+  }
+}
+
+# Inbound interactions for a customer within a time window (for trend detection)
+query GetInteractionsInWindow(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $after: Timestamp!
+  $before: Timestamp!
+) @auth(level: NO_ACCESS) {
+  interactions(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      direction: { eq: customer }
+      occurredAt: { ge: $after, le: $before }
+    }
+    limit: 100
+  ) {
+    id
+    occurredAt
+  }
+}
+
+# Recent sentiment signals for a customer (for trend analysis)
+query GetRecentSentimentSignals(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $after: Timestamp!
+) @auth(level: NO_ACCESS) {
+  signals(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      kind: { eq: sentiment }
+      supersededAt: { isNull: true }
+      generatedAt: { ge: $after }
+    }
+    orderBy: { generatedAt: ASC }
+    limit: 20
+  ) {
+    id
+    state
+    sentence
+    generatedAt
+  }
+}
+
+# Check for an existing active signal of a given kind (sweep dedup)
+query GetActiveSignalByKind(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $kind: SignalKind!
+) @auth(level: NO_ACCESS) {
+  signals(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      kind: { eq: $kind }
+      supersededAt: { isNull: true }
+    }
+    orderBy: { generatedAt: DESC }
+    limit: 1
+  ) {
+    id
+    state
+    generatedAt
+  }
+}
+
+# Active (non-terminal) tasks for a customer — used by signal router to prevent
+# duplicate task creation when a signal fires for an already-queued account.
+query GetActiveTasksForCustomer(
+  $workspaceId: UUID!
+  $customerId: UUID!
+) @auth(level: NO_ACCESS) {
+  agentTasks(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      status: { in: [pending, in_progress, waiting] }
+    }
+    orderBy: { priority: ASC }
+    limit: 1
+  ) {
+    id
+    status
+    priority
+    taskType
+  }
+}
+
+# Risk context for the inbound support lane's deterministic risk_analyst:
+# active signals + lifecycle/renewal + open risk-typed needs, in one read.
+query GetCustomerRiskContext($workspaceId: UUID!, $customerId: UUID!) @auth(level: NO_ACCESS) {
+  customer(id: $customerId) {
+    id
+    name
+    lifecycle
+    daysToRenewal
+    renewalReadiness
+    signals_on_customer(where: { supersededAt: { isNull: true } }) {
+      kind
+      state
+      sentence
+    }
+  }
+  needs(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      resolvedAt: { isNull: true }
+      type: { in: [renewal_at_risk, going_dark, escalation, frustrated_signal, champion_departed] }
+    }
+    limit: 5
+  ) {
+    id
+    type
+    headline
+  }
+}
+
+# Pipeline console: list recent AgentTasks for a workspace (newest first), for the queue viewer.
+query ListAgentTasksForWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  agentTasks(
+    where: { workspace: { id: { eq: $workspaceId } } }
+    orderBy: { createdAt: DESC }
+    limit: 100
+  ) {
+    id
+    customer { id name }
+    taskType
+    triggerType
+    status
+    priority
+    scheduledFor
+    attempts
+    createdAt
+    completedAt
+    agentRun { id status }
+  }
+}
+
+# ============================================================================
+# RENEWALS — pipeline list + adaptive workspace
+# ============================================================================
+
+# Screen 1 — Renewals pipeline. Every customer with a renewal date, plus the
+# renewal profile (posture, target ARR), goal-progress vectors for the mini
+# bars, current signals, and stakeholders (for champion-departure context).
+query GetRenewalsPipeline($workspaceId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts read if not).
+  workspaceMembers(
+    where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+    limit: 1
+  ) @redact @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+    role
+  }
+  customers(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      daysToRenewal: { isNull: false }
+    }
+    orderBy: { daysToRenewal: ASC }
+  ) {
+    id
+    name
+    slug
+    arrCents
+    daysToRenewal
+    lifecycle
+    renewalReadiness
+    valueRealizationText
+    clientSignedDate
+    renewalProfiles_on_customer(orderBy: { updatedAt: DESC }, limit: 1) {
+      id
+      posture
+      postureReason
+      narrativeLede
+      targetArrCents
+      expansionPipeCents
+    }
+    goals_on_customer(
+      where: { status: { eq: active } }
+      orderBy: [{ isPrimary: DESC }, { sortOrder: ASC }]
+      limit: 3
+    ) {
+      id
+      text
+      isPrimary
+      progressVectors_on_goal(orderBy: { category: ASC }, limit: 1) {
+        id
+        category
+        progress
+        currentState
+        description
+      }
+    }
+    signals_on_customer(where: { supersededAt: { isNull: true } }, limit: 5) {
+      kind
+      state
+      sentence
+    }
+    stakeholders_on_customer {
+      id
+      status
+      isChampion
+    }
+  }
+}
+
+# Screen 2 — Renewal workspace detail for one account.
+query GetRenewalWorkspace($customerId: UUID!) @auth(level: USER_ANON) {
+  # RBAC gate: caller must belong to the customer's workspace (redacted; aborts read if not).
+  _membership: customer(id: $customerId) @redact @check(expr: "this != null", message: "Customer not found") {
+    workspace {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  customer(id: $customerId) {
+    id
+    name
+    slug
+    oneLiner
+    tier
+    arrCents
+    daysToRenewal
+    lifecycle
+    renewalReadiness
+    valueRealizationText
+    clientSignedDate
+    relationshipHealth
+    relationshipHealthScore
+    renewalProfiles_on_customer(orderBy: { updatedAt: DESC }, limit: 1) {
+      id
+      posture
+      postureReason
+      narrativeLede
+      targetArrCents
+      expansionPipeCents
+      renewalType
+      autoRenew
+      termNote
+      lastPriceChangeNote
+      postureSetBy
+      postureDerivedAt
+      renewalPlays_on_profile(orderBy: { sortOrder: ASC }) {
+        id
+        kind
+        posture
+        title
+        description
+        basis
+        valueAmountCents
+        valueLabel
+        isPrimary
+        sortOrder
+      }
+      renewalRiskItems_on_profile(orderBy: { sortOrder: ASC }) {
+        id
+        title
+        description
+        severity
+        mitigation
+        sortOrder
+      }
+    }
+    goals_on_customer(
+      where: { status: { eq: active } }
+      orderBy: [{ isPrimary: DESC }, { sortOrder: ASC }]
+    ) {
+      id
+      text
+      isPrimary
+      progressVectors_on_goal(orderBy: { category: ASC }) {
+        id
+        category
+        description
+        currentState
+        progress
+        baselineProgress
+        targetProgress
+        targetLabel
+        unlocks
+        assessmentReason
+      }
+    }
+    stakeholders_on_customer {
+      id
+      name
+      role
+      status
+      isChampion
+      renewalHealth
+      sentimentNote
+      lastInteractionAt
+    }
+    signals_on_customer(where: { supersededAt: { isNull: true } }, limit: 10) {
+      id
+      kind
+      state
+      sentence
+      evidenceText
+    }
+  }
+}
+
+# Renewals seed helper — PUBLIC read of the IDs the seed needs to attach
+# progress vectors and update stakeholders (the USER-level GetCustomer can't
+# be called from the unauthenticated seed script).
+query GetCustomerSeedRefs($customerId: UUID!) @auth(level: NO_ACCESS) {
+  customer(id: $customerId) {
+    id
+    goals_on_customer(orderBy: { sortOrder: ASC }) {
+      id
+      text
+    }
+    stakeholders_on_customer {
+      id
+      name
+    }
+    progressVectors_on_customer {
+      id
+    }
+  }
+}
+
+# ============================================================================
+# METRIC SNAPSHOTS (time-series substrate — see docs/plans/SIGNAL_AGGREGATION.md)
+# ============================================================================
+
+# Oldest snapshots in a workspace captured before a cutoff — used by the retention
+# job to downsample raw rows older than the retention window to daily.
+query GetMetricSnapshotsBefore(
+  $workspaceId: UUID!
+  $before: Timestamp!
+  $limit: Int!
+) @auth(level: NO_ACCESS) {
+  metricSnapshots(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      capturedAt: { lt: $before }
+    }
+    orderBy: { capturedAt: ASC }
+    limit: $limit
+  ) {
+    id
+    customer {
+      id
+    }
+    stakeholder {
+      id
+    }
+    metric
+    capturedAt
+  }
+}
+
+# Most recent snapshot for a customer/metric (fast "prior value" read).
+query GetLatestMetricSnapshot(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $metric: String!
+) @auth(level: NO_ACCESS) {
+  metricSnapshots(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      metric: { eq: $metric }
+    }
+    orderBy: { capturedAt: DESC }
+    limit: 1
+  ) {
+    id
+    metric
+    value
+    state
+    prevValue
+    trigger
+    inputs
+    capturedAt
+  }
+}
+
+# Recent snapshots for a single stakeholder/metric since a timestamp — used for
+# per-stakeholder responsiveness (response_latency) baselines. Oldest-first.
+query GetRecentStakeholderMetricSnapshots(
+  $workspaceId: UUID!
+  $stakeholderId: UUID!
+  $metric: String!
+  $since: Timestamp!
+) @auth(level: NO_ACCESS) {
+  metricSnapshots(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      stakeholder: { id: { eq: $stakeholderId } }
+      metric: { eq: $metric }
+      capturedAt: { ge: $since }
+    }
+    orderBy: { capturedAt: ASC }
+    limit: 200
+  ) {
+    id
+    metric
+    value
+    state
+    capturedAt
+  }
+}
+
+# Recent snapshots for a customer/metric since a timestamp (sparkline / trend).
+# Oldest-first; limit 200 covers ~90d of append-on-change + daily heartbeat.
+query GetRecentMetricSnapshots(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $metric: String!
+  $since: Timestamp!
+) @auth(level: NO_ACCESS) {
+  metricSnapshots(
+    where: {
+      workspace: { id: { eq: $workspaceId } }
+      customer: { id: { eq: $customerId } }
+      metric: { eq: $metric }
+      capturedAt: { ge: $since }
+    }
+    orderBy: { capturedAt: ASC }
+    limit: 200
+  ) {
+    id
+    metric
+    value
+    state
+    prevValue
+    trigger
+    inputs
+    capturedAt
+  }
+}

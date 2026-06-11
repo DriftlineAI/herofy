@@ -1,0 +1,8 @@
+connectorId: herofy
+generate:
+  javascriptSdk:
+    - outputDir: ../../frontend/src/dataconnect-generated
+      package: "@herofy/dataconnect"
+      packageJsonDir: ../../frontend
+      react: true
+      angular: false

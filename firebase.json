@@ -1,0 +1,37 @@
+{
+  "emulators": {
+    "dataconnect": {
+      "dataDir": "dataconnect/.dataconnect/pgliteData"
+    },
+    "firestore": {
+      "port": 8181
+    },
+    "ui": {
+      "enabled": true,
+      "port": 4001
+    }
+  },
+  "dataconnect": {
+    "source": "dataconnect"
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "hosting": {
+    "public": "frontend/dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      { "source": "/integrations/**", "run": { "serviceId": "herofy-api", "region": "us-central1" } },
+      { "source": "/api/**",          "run": { "serviceId": "herofy-api", "region": "us-central1" } },
+      { "source": "/agents/**",       "run": { "serviceId": "herofy-api", "region": "us-central1" } },
+      { "source": "/webhooks/**",     "run": { "serviceId": "herofy-api", "region": "us-central1" } },
+      { "source": "/sync/**",         "run": { "serviceId": "herofy-api", "region": "us-central1" } },
+      { "source": "/demo/**",         "run": { "serviceId": "herofy-api", "region": "us-central1" } },
+      { "source": "**", "destination": "/index.html" }
+    ]
+  }
+}

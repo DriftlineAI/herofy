@@ -1,0 +1,1502 @@
+# Herofy Database Schema for Firebase SQL Connect
+# Translated from PostgreSQL migrations 001-004
+
+# ============================================================================
+# ENUMS
+# ============================================================================
+
+enum WorkspaceRole {
+  owner
+  admin
+  member
+}
+
+enum JoinRequestStatus {
+  pending
+  approved
+  rejected
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  expired
+  revoked
+}
+
+enum CustomerLifecycle {
+  prospect
+  handoff
+  onboarding
+  active
+  renewing
+  at_risk
+  churned
+}
+
+enum RenewalReadiness {
+  not_started
+  tracking
+  ready
+  at_risk
+}
+
+enum StakeholderStatus {
+  active
+  departed
+}
+
+# Structured importance tier (vs free-text `role`) — drives per-contact weighting
+# in the engagement-health model (champion/buyer ≫ user). See ENGAGEMENT_HEALTH_MODEL.md.
+enum StakeholderImportance {
+  champion
+  economic_buyer
+  technical
+  user
+  detractor
+  unknown
+}
+
+enum GoalStatus {
+  active
+  achieved
+  dropped
+}
+
+enum InteractionChannel {
+  email
+  slack
+  meeting
+  in_app
+  sms_screenshot
+  note
+}
+
+enum InteractionDirection {
+  us
+  customer
+  internal
+}
+
+enum ThreadStatus {
+  open
+  resolved
+  archived
+}
+
+enum ThreadCategory {
+  support
+  onboarding
+  success
+  uncategorized
+}
+
+enum ThreadType {
+  customer
+  sidekick
+  internal
+  quarantined
+}
+
+enum HuddleStatus {
+  open
+  resolved
+}
+
+enum MeetingSource {
+  manual
+  google_calendar
+  mcp_sync
+}
+
+enum MilestoneStatus {
+  not_started
+  in_progress
+  blocked
+  done
+  skipped
+}
+
+enum OwnerSide {
+  us
+  customer
+  joint
+}
+
+enum CommitmentStatus {
+  in_progress
+  done
+  overdue
+}
+
+enum CommitmentSide {
+  us
+  them
+}
+
+enum SignalKind {
+  engagement
+  sentiment
+  commitments
+  going_dark
+  cadence
+}
+
+enum SignalState {
+  ok
+  warn
+  risk
+}
+
+# Goal-centric architecture: Progress Vector categories
+enum VectorCategory {
+  trust            # Building customer confidence
+  risk_mitigation  # De-risking scope/timeline concerns
+  stakeholder      # Keeping key stakeholders happy
+  value            # Demonstrating concrete wins
+  momentum         # Maintaining engagement velocity
+}
+
+enum RiskLevel {
+  low
+  medium
+  high
+}
+
+# Renewals: the strategic stance for an account's renewal, set by Sidekick
+# from the account's signals/readiness/goal-progress.
+enum RenewalPosture {
+  expand   # Goals green + growth signal → lead with the upsell
+  hold     # Healthy but flat → protect value, lock the renewal clean
+  defend   # Stalled goal / risk signal / churn pattern → re-anchor value, de-risk
+}
+
+# Renewals: the badge/kind on a renewal play card.
+enum RenewalPlayKind {
+  re_anchor    # Defend: lead with dollarized value proof
+  de_risk      # Defend: pre-empt a competitive/consolidation threat
+  re_seat      # Defend: re-seat a champion
+  upsell       # Expand: new seats / tier bump
+  multi_year   # Expand: lock a multi-year term
+  co_success   # Hold: agree the next goal together
+  early_close  # Hold: incentive for an early commit
+}
+
+enum BlastRadius {
+  low
+  medium
+  high
+}
+
+enum HandbookDocKind {
+  DOCUMENT         # Original handbook documents
+  VOICE_CORE       # Core Voice - the foundation for all AI communication
+  VOICE_FOUNDATION # Foundation docs (6 default: tone, style, etc.)
+  VOICE_SCENARIO   # Scenario-specific tone guides (user-created)
+}
+
+enum VoiceSurface {
+  SIDEKICK_TIP
+  EMAIL_DRAFT
+  HITL_QUESTION
+  PLAN_STEP
+}
+
+enum ApprovalStatus {
+  pending_approval
+  approved
+  rejected
+  superseded
+}
+
+enum HandoffStatus {
+  draft
+  confirmed
+  needs_correction
+}
+
+enum DraftResponseStatus {
+  pending_review
+  approved
+  sent
+  discarded
+  edited
+}
+
+enum NeedType {
+  urgent_support
+  going_dark
+  stalled_milestone
+  approaching_renewal
+  open_commitment_overdue
+  frustrated_signal
+  champion_departed
+  onboarding_behind
+  renewal_at_risk
+  new_handoff
+  meeting_prep_ready
+  positive_signal
+  expansion_signal
+  check_in_due
+  escalation
+  plan_approval_required
+  draft_response_ready
+  sidekick_question
+  uncategorized
+}
+
+# Workflow status for a Need (the conversation/triage lifecycle). Every Need has
+# one (default needs_response). snoozedUntil / resolvedAt carry the *when*; this
+# carries the *state*.
+enum WorkflowStatus {
+  needs_response
+  awaiting_customer
+  blocked
+  snoozed
+  resolved
+}
+
+enum AgentStatus {
+  initialized
+  running
+  waiting_for_input
+  resuming
+  completed
+  failed
+}
+
+enum ConfidenceLevel {
+  high
+  medium
+  low
+}
+
+# Orchestrator work-queue task lifecycle (net-new, side-by-side with handoff_auto)
+enum AgentTaskStatus {
+  pending       # eligible to be claimed (when scheduledFor <= now)
+  in_progress   # claimed by a worker, executing
+  waiting       # paused for human input (see blockingNeed)
+  done          # completed successfully
+  failed        # terminal failure
+}
+
+enum IntegrationType {
+  notion
+  notion_mcp
+  slack
+  gmail
+  hubspot
+  calendar
+}
+
+enum IntegrationStatus {
+  pending
+  active
+  error
+  revoked
+}
+
+enum EnrichmentStatus {
+  pending
+  processing
+  completed
+  failed
+}
+
+enum ChangeEventSource {
+  gmail
+  slack
+  calendar
+  notion
+  hubspot
+  manual
+}
+
+enum ChangeEventClass {
+  new_customer
+  structured_field_update
+  unstructured_content
+  unknown_sender
+}
+
+enum SidekickItemType {
+  asking      # Questions that block agents
+  tip         # Factual suggestions
+  observed    # Quieter factual notes (dimmed)
+  working     # Agent running (pulse + progress)
+  resolved    # History (checkmark, dimmed)
+}
+
+enum QuestionType {
+  missing_data
+  clarification
+  ambiguity
+  validation
+}
+
+enum MeetingStatus {
+  scheduled
+  completed
+  cancelled
+  no_show
+}
+
+enum MeetingLinkStatus {
+  pending
+  linked
+  unlinked
+}
+
+enum RelationshipHealth {
+  strong
+  healthy
+  stable
+  at_risk
+  deteriorating
+}
+
+enum GoalSourceType {
+  manual
+  transcript
+  email
+  slack
+  meeting
+  notion
+  ai_inferred
+}
+
+enum ObservationStatus {
+  active
+  inactive
+  archived
+}
+
+enum BlockCategory {
+  kickoff
+  setup
+  integration
+  data
+  training
+  validation
+  launch
+  review
+}
+
+enum PlaybookComplexity {
+  simple      # 1-2 weeks, minimal integration
+  standard    # 30-60 days, typical SaaS
+  complex     # 60-120 days, enterprise with SSO/integrations
+}
+
+enum PlaybookEditType {
+  added_milestone
+  removed_milestone
+  changed_duration
+  changed_owner
+  reordered
+  changed_description
+}
+
+# ============================================================================
+# CORE TENANCY
+# ============================================================================
+
+type Workspace @table {
+  id: UUID! @default(expr: "uuidV4()")
+  name: String!
+  slug: String! @unique
+  domain: String  # Email domain for team matching (e.g., "acme.com")
+  valueProp: String  # Product value proposition for AI context
+  setupCompleted: Boolean @default(value: false)
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# Pending join requests for workspaces
+type WorkspaceJoinRequest @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  userId: String!  # Firebase UID of requesting user
+  userEmail: String!
+  status: JoinRequestStatus! @default(value: "pending")
+  createdAt: Timestamp! @default(expr: "request.time")
+  reviewedAt: Timestamp
+  reviewedByUser: User
+}
+
+# User table keyed by Firebase Auth UID
+type User @table {
+  id: String! @default(expr: "auth.uid")
+  email: String! @unique
+  displayName: String
+  avatarUrl: String
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type WorkspaceMember @table(key: ["workspace", "user"]) {
+  workspace: Workspace!
+  user: User!
+  role: WorkspaceRole! @default(value: "member")
+  hasCompletedSetup: Boolean @default(value: false)
+  joinedAt: Timestamp! @default(expr: "request.time")
+}
+
+type WorkspaceInvitation @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  email: String!                                      # Email being invited
+  role: WorkspaceRole!                                # Role to grant on accept
+  invitedByUser: User!                                # Who sent the invitation
+  token: String! @unique                              # URL-safe token for link
+  expiresAt: Timestamp!                               # 7 days from creation
+  status: InvitationStatus! @default(value: "pending")
+  acceptedByUser: User                                # May differ from invited email
+  acceptedAt: Timestamp
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# CUSTOMERS
+# ============================================================================
+
+type Customer @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  name: String!
+  slug: String!
+  domain: String  # Customer's email domain (e.g., "acme.com")
+  oneLiner: String
+  tier: String
+  arrCents: Int64
+  lifecycle: CustomerLifecycle! @default(value: "prospect")
+  daysToRenewal: Int
+  onboardingDayCurrent: Int
+  onboardingDayTotal: Int
+  renewalReadiness: RenewalReadiness @default(value: "not_started")
+  valueRealizationText: String
+  adaptedFromPlaybookId: UUID
+  # External source tracking (vendor-agnostic)
+  externalSource: String          # "notion", "hubspot", "pipedrive", "csv", etc.
+  externalId: String              # The ID in the external system
+  lastSyncedAt: Timestamp         # When we last pulled data from external source
+  # Linked external pages/resources (JSON array, vendor-agnostic)
+  # Format: [{"source": "notion", "id": "page_id", "type": "handoff"|"tracker"|"notes", "url": "...", "title": "...", "hasAccess": true}]
+  linkedPages: String
+  # AI Enrichment
+  rawNotes: String                # Raw CRM notes for AI processing
+  enrichmentStatus: EnrichmentStatus @default(value: "pending")
+  enrichmentAttempts: Int @default(value: 0)
+  enrichmentCompletedAt: Timestamp
+  enrichmentError: String
+  # AI Classification (during setup)
+  aiClassificationGroup: String   # not_yet_customer, new_customer, pointer_needed, ready_to_confirm
+  aiClassificationConfidence: Int # 0-100
+  aiClassificationReasoning: String
+  aiClassificationWhatIKnow: String    # JSON array
+  aiClassificationUncertainties: String # JSON array
+  aiClassificationAt: Timestamp
+  # Client lifecycle tracking
+  clientSignedDate: Date  # When client signed contract (distinct from Herofy creation date)
+  # Relationship health tracking
+  relationshipHealth: RelationshipHealth @default(value: "stable")
+  relationshipHealthScore: Int @default(value: 50)  # 0-100
+  relationshipHealthUpdatedBy: String  # "agent:name" or "user:uid"
+  relationshipHealthUpdatedAt: Timestamp
+  relationshipHealthReason: String  # Why this health score (for user overrides)
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type Stakeholder @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  name: String!
+  email: String
+  role: String
+  status: StakeholderStatus! @default(value: "active")
+  sentimentNote: String
+  lastInteractionAt: Timestamp
+  # Structured importance tier for engagement-health weighting (isChampion kept for
+  # back-compat / renewals; champion is also expressible as importance=champion).
+  importance: StakeholderImportance @default(value: "unknown")
+  # Renewals: champion flag (multi-champion safe) + renewal-specific health stance
+  isChampion: Boolean @default(value: false)
+  renewalHealth: SignalState  # ok | warn | risk — renewal-specific read, distinct from active/departed
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type Goal @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  text: String!
+  status: GoalStatus! @default(value: "active")
+  sortOrder: Int! @default(value: 0)
+  # Goal-centric architecture: Mark primary goal (Mission Objective)
+  isPrimary: Boolean @default(value: false)  # True = this is the customer's north star goal
+  # Source attribution
+  source: String! @default(value: "manually added")  # Freeform text for AI display
+  sourceType: GoalSourceType! @default(value: "manual")  # Enum for filtering
+  sourceDate: Timestamp! @default(expr: "request.time")
+  sourceInteractionId: UUID  # Optional link to interaction
+  sourceThreadId: UUID  # Optional link to thread
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# Goal-centric architecture: Progress Vectors
+# Abstract indicators of movement toward a goal (trust, risk, stakeholder happiness, etc.)
+type ProgressVector @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  goal: Goal!                           # The goal this vector measures progress toward
+  category: VectorCategory!             # trust, risk_mitigation, stakeholder, value, momentum
+  description: String!                  # "Building trust with Sarah (champion)"
+  currentState: SignalState!            # ok, warn, risk - reuses existing enum
+  # Numeric progress (optional - falls back to state-based if missing)
+  progress: Float                       # 0.0-1.0 representing % toward unlock
+  baselineProgress: Float               # 0.0-1.0 snapshot at contract start (the "start" tick on the renewal spine)
+  targetProgress: Float                 # Target threshold (e.g., 0.8 = 80%)
+  targetLabel: String                   # Display label for target (e.g., "Day 14")
+  unlocks: String                       # What completing this vector enables
+  assessmentReason: String              # Why this state was assigned
+  lastAssessedAt: Timestamp! @default(expr: "request.time")
+  lastAssessedBy: String                # "agent:handoff_auto" or "user:uid"
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# Goal-centric architecture: Customer Strategy
+# Living strategy document - unlike HandoffBrief (point-in-time snapshot),
+# this is the ongoing "why we're doing what we're doing" context
+type CustomerStrategy @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  body: String!                         # Markdown - living strategy memo
+  lastUpdatedBy: String                 # "agent:handoff_auto" or "user:uid"
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type GoalObservation @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  goal: Goal!
+  # Observation content
+  text: String!
+  confidence: ConfidenceLevel!
+  # Source tracking - what triggered this observation
+  sourceInteractionId: UUID  # e.g., "Marcos mentioned this in..."
+  sourceType: String!  # "slack message", "email", "meeting transcript"
+  observedAt: Timestamp! @default(expr: "request.time")
+  # Deduplication - fingerprint should include workspace_id in hash for workspace scoping
+  fingerprint: String! @unique
+  # Lifecycle
+  status: ObservationStatus! @default(value: "active")
+  # Relations
+  sourceInteraction: Interaction
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# NEEDS (Central to the model)
+# ============================================================================
+
+type Need @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  type: NeedType!
+  status: WorkflowStatus! @default(value: "needs_response")
+  headline: String!
+  lede: String
+  priorityRank: Int! @default(value: 100)
+  # Relationships - a need can reference various entities
+  milestone: Milestone
+  meeting: Meeting
+  focusSection: String
+  snoozedUntil: Timestamp
+  resolvedAt: Timestamp
+  source: String  # JSON string for {channel, from, quote}
+  agentReasoning: String  # Optional reasoning from agent
+  handbookVersion: HandbookVersion  # Optional link to handbook version for audit
+  agentRun: AgentRun  # Link to agent run for resume flow
+  sourceEventId: String  # Links to ChangeEvent that created this need
+  # Conversation a need relates to. Many needs may reference one thread (fan-out:
+  # e.g. a draft_response_ready AND a renewal_at_risk on the same email). Distinct
+  # from thread.need (a thread's primary need); nullable.
+  thread: Thread
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type NeedRecommendation @table {
+  id: UUID! @default(expr: "uuidV4()")
+  need: Need!
+  rationale: String
+  primaryAction: String
+  secondaryAction: String
+  confidenceText: String
+  model: String!
+  promptVersion: String!
+  generatedAt: Timestamp! @default(expr: "request.time")
+  handbookVersionId: UUID!
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+type NeedEvidence @table {
+  id: UUID! @default(expr: "uuidV4()")
+  need: Need!
+  interaction: Interaction
+  meeting: Meeting
+  commitment: Commitment
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# THREADS & INTERACTIONS
+# ============================================================================
+
+type Thread @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  need: Need  # Every thread should belong to a need
+  subject: String
+  status: ThreadStatus! @default(value: "open")
+  channel: InteractionChannel
+  assignedUser: User
+  category: ThreadCategory! @default(value: "uncategorized")
+  aiCategorySuggestion: ThreadCategory
+  threadType: ThreadType @default(value: "customer")
+  externalThreadId: String  # External thread ID for dedup (e.g., Gmail thread ID)
+  originDetail: String
+  archivedAt: Timestamp
+  resolvedAt: Timestamp
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type Interaction @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  thread: Thread
+  channel: InteractionChannel!
+  originKind: String
+  direction: InteractionDirection!
+  senderName: String
+  senderUser: User
+  stakeholder: Stakeholder  # resolved external sender (null = internal / unresolved)
+  occurredAt: Timestamp! @default(expr: "request.time")
+  subject: String
+  bodyEncrypted: String
+  summaryAi: String
+  externalRef: String  # JSON string for {system, thread_id, message_id}
+  sourceEventId: String  # External event ID for dedup
+  bodyStoredAt: String
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# MEETINGS
+# ============================================================================
+
+type Meeting @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  need: Need  # The need this meeting addresses (nullable for ad hoc)
+  title: String!
+  type: String
+  scheduledAt: Timestamp!
+  durationMinutes: Int
+  source: MeetingSource! @default(value: "manual")
+  status: MeetingStatus @default(value: "scheduled")
+  externalEventId: String
+  recurringEventId: String  # For recurring calendar events
+  linkStatus: MeetingLinkStatus @default(value: "pending")
+  attendeesOurs: String  # JSON array
+  attendeesTheirs: String  # JSON array
+  deletedAt: Timestamp  # Soft delete
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type MeetingBrief @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  meeting: Meeting!
+  progressNarrative: String
+  progressFacts: String  # JSON array
+  friction: String
+  talkingPoints: String  # JSON array
+  valueDelivered: String
+  riskToRenewal: String
+  expansionSignals: String
+  pricingContext: String
+  followupEmail: String  # JSON object
+  generatedAt: Timestamp! @default(expr: "request.time")
+  model: String!
+  promptVersion: String!
+  inputsHash: String!
+  handbookVersionId: UUID!
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# MILESTONES & COMMITMENTS
+# ============================================================================
+
+type Milestone @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  title: String!
+  ownerLabel: String
+  ownerSide: OwnerSide! @default(value: "joint")
+  targetDate: Date
+  status: MilestoneStatus! @default(value: "not_started")
+  description: String
+  blockedReason: String
+  sortOrder: Int! @default(value: 0)
+  adaptedFromPlaybookId: UUID
+  # Goal-centric architecture: Link milestone to the goal it serves
+  goal: Goal                    # FK to the goal this milestone advances (nullable for backwards compat)
+  goalRationale: String         # Why this milestone helps achieve the goal
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type Commitment @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  side: CommitmentSide!
+  text: String!
+  dueLabel: String              # free-text label (e.g. "EOW") — kept for display
+  dueDate: Date                 # real due date — enables measurable follow-through reliability
+  deliveredAt: Timestamp        # when it was actually fulfilled (null = not yet delivered)
+  status: CommitmentStatus! @default(value: "in_progress")
+  sourceInteraction: Interaction
+  sourceMeeting: Meeting
+  # Goal-centric architecture: Stakes (The Ledger)
+  stake: String                 # What's at risk if this commitment breaks ("Sarah's reputation")
+  stakeHolder: Stakeholder      # FK to the person who bears the stake
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# SIGNALS
+# ============================================================================
+
+type Signal @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  kind: SignalKind!
+  state: SignalState!
+  sentence: String
+  evidenceText: String
+  nextAction: String
+  supersededAt: Timestamp
+  generatedAt: Timestamp! @default(expr: "request.time")
+  model: String!
+  promptVersion: String!
+  inputsHash: String!
+  handbookVersionId: UUID!
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# RISK MANAGEMENT
+# ============================================================================
+
+type RiskBrief @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  whatChanged: String
+  evidenceText: String
+  play: String
+  generatedAt: Timestamp! @default(expr: "request.time")
+  model: String!
+  promptVersion: String!
+  inputsHash: String!
+  handbookVersionId: UUID!
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type RiskPlayStep @table {
+  id: UUID! @default(expr: "uuidV4()")
+  brief: RiskBrief!
+  label: String!
+  rationale: String
+  done: Boolean! @default(value: false)
+  # Optional CSM findings when a step is worked (e.g. what the deep dive turned up). Captured
+  # for the record now; a future AI run can fold these back into the play.
+  notes: String
+  sortOrder: Int! @default(value: 0)
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+type RenewalRisk @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  riskLevel: RiskLevel!
+  summary: String
+  evidenceIds: String  # JSON array
+  generatedAt: Timestamp! @default(expr: "request.time")
+  handbookVersionId: UUID!
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# RENEWALS WORKSPACE
+# Net-new, additive. Powers the Renewals pipeline list + adaptive workspace.
+# A RenewalProfile is the per-customer companion that carries the posture,
+# the contract facts shown in the right rail, and the expansion targets.
+# RenewalPlay / RenewalRiskItem hang off the profile. Seed-written today;
+# the orchestrator's risk_save play can write these later (see artifacts.py).
+# ============================================================================
+
+type RenewalProfile @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!                          # 1:1 companion (one current profile per customer)
+  posture: RenewalPosture! @default(value: "hold")
+  postureReason: String                        # short rationale for the posture (shown in hero Sidekick note)
+  narrativeLede: String                        # the one-sentence thesis shown in list + hero
+  targetArrCents: Int64                        # desired contract value at renewal (null = hold current)
+  expansionPipeCents: Int64                    # potential upside amount (expand posture)
+  # Contract facts for the right rail
+  renewalType: String                          # display label: "Annual", "Expansion", "At risk", ...
+  autoRenew: Boolean
+  termNote: String                             # e.g. "Annual · opt-in" or "24-month goal"
+  lastPriceChangeNote: String                  # e.g. "None · 2yr flat"
+  # Provenance
+  postureSetBy: String                         # "seed" | "agent:orchestrator" | "user:uid"
+  postureDerivedAt: Timestamp
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# A strategic renewal play (defense or expansion). Distinct from RiskPlayStep
+# (the orchestrator's save-play checklist): a play card has a $ amount, basis,
+# and a posture badge.
+type RenewalPlay @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  profile: RenewalProfile!
+  kind: RenewalPlayKind!
+  posture: RenewalPosture!                     # which posture this play appears under
+  title: String!
+  description: String!
+  basis: String                                # evidence basis line (e.g. "12 WORKFLOWS × AVG 5.6 DAYS SAVED")
+  valueAmountCents: Int64                       # $ this play protects or adds (nullable)
+  valueLabel: String                           # display: "PROTECTS · $24K" or "ADDS · +$45K ARR"
+  isPrimary: Boolean! @default(value: false)   # the lead play, rendered prominently
+  sortOrder: Int! @default(value: 0)
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# A discrete risk-register item for the renewal workspace (title + severity +
+# mitigation). Distinct from RenewalRisk (an AI one-liner) — these are the
+# named risks shown in the "what could lose it" register.
+type RenewalRiskItem @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  profile: RenewalProfile!
+  title: String!
+  description: String!
+  severity: RiskLevel!                          # low | medium | high
+  mitigation: String
+  sortOrder: Int! @default(value: 0)
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# HANDOFFS (HITL)
+# ============================================================================
+
+type HandoffBrief @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer  # NULL if customer not yet created
+  capturedAt: Timestamp! @default(expr: "request.time")
+  # Markdown body - the primary content written by the agent
+  body: String  # Comprehensive markdown document with all handoff details
+  # Timeline
+  dayCurrent: Int
+  dayTotal: Int
+  # Legacy structured fields (for backwards compatibility, prefer body)
+  salesCommitments: String  # JSON
+  technicalContext: String  # JSON
+  realityCheckConfidence: String
+  realityCheckRisks: String
+  status: HandoffStatus! @default(value: "draft")
+  userCorrections: String  # JSON
+  confirmedByUser: User
+  confirmedAt: Timestamp
+  notionDealId: String
+  notionDealUrl: String
+  handbookVersionId: UUID!
+  model: String
+  promptVersion: String
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type HandoffOpenQuestion @table {
+  id: UUID! @default(expr: "uuidV4()")
+  brief: HandoffBrief!
+  text: String!
+  resolved: Boolean! @default(value: false)
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# Handoff questions with routing (side-asks, kickoff items)
+# These are non-blocking questions that the agent records but doesn't pause for
+type HandoffQuestion @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  agentRun: AgentRun
+  # The question text
+  question: String!
+  # What data field this relates to (e.g., "success_metrics", "timeline")
+  field: String
+  # Routing: "sales" (side-ask for AE) or "kickoff" (kickoff agenda item)
+  routing: String!
+  # Structured question type: pick_one, pick_many, pick_person, slider, freeform, date, yes_no
+  questionType: String @default(value: "freeform")
+  # JSON metadata for question type (options, min/max, labels, etc.)
+  metadata: String
+  # Agent's proposed answer (for side-asks, makes confirmation easier)
+  proposedAnswer: String
+  # What aspect of the plan this affects
+  relatesTo: String
+  # Status: pending, answered, skipped
+  status: String! @default(value: "pending")
+  # The actual answer when provided
+  answerText: String
+  answeredAt: Timestamp
+  answeredBy: User
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# AI PLANS (HITL)
+# ============================================================================
+
+type AiPlan @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer
+  brief: HandoffBrief
+  archetypeName: String
+  milestoneCount: Int
+  durationLabel: String
+  rationale: String
+  headline: String
+  milestones: String  # JSON array of milestone objects
+  status: ApprovalStatus! @default(value: "pending_approval")
+  approvedByUser: User
+  approvedAt: Timestamp
+  rejectionReason: String
+  regeneratedFromPlanId: UUID
+  humanEdited: Boolean! @default(value: false)
+  regenerationCount: Int! @default(value: 0)
+  generatedAt: Timestamp! @default(expr: "request.time")
+  model: String!
+  promptVersion: String!
+  inputsHash: String
+  handbookVersion: HandbookVersion  # Optional audit trail
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# DRAFT RESPONSES (HITL)
+# ============================================================================
+
+type DraftResponse @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  thread: Thread
+  subject: String
+  body: String!
+  # "Vector preview": JSON array of source attributions for spans of the draft —
+  # [{quote, source_type: handbook|voice|past_interaction|signal, source_id, snippet}].
+  # Populated once the vector/RAG grounding layer lands; UI renders highlights when present.
+  citations: String
+  status: DraftResponseStatus! @default(value: "pending_review")
+  editedBody: String
+  approvedByUser: User
+  approvedAt: Timestamp
+  sentAt: Timestamp
+  autoSendAfter: Timestamp
+  surfacedInNeed: Need
+  generatedAt: Timestamp! @default(expr: "request.time")
+  model: String!
+  promptVersion: String!
+  handbookVersionId: UUID!
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# HUDDLES — internal team discussion anchored to a conversation (and optionally a
+# specific message). Isomorphic to Thread→Interaction: a Huddle has many
+# HuddleMessages. `@sidekick` participation = an agent-authored HuddleMessage,
+# posted by the orchestrator via a huddle_reply task.
+# ============================================================================
+
+type Huddle @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  thread: Thread!                         # the customer conversation this huddle lives on
+  anchorInteraction: Interaction          # null = conversation-level; set = pinned to a message
+  title: String
+  status: HuddleStatus! @default(value: "open")
+  createdByUser: User
+  resolvedAt: Timestamp
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type HuddleMessage @table {
+  id: UUID! @default(expr: "uuidV4()")
+  huddle: Huddle!
+  authorUser: User                        # null when authorKind = agent
+  authorKind: String! @default(value: "user")  # "user" | "agent"
+  body: String!
+  mentions: String                        # JSON array of userIds and/or "sidekick"
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# CAPTURED ITEMS
+# ============================================================================
+
+type CapturedItem @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  meeting: Meeting
+  tag: String!  # commitment, goal, risk, followup, decision
+  text: String!
+  dueLabel: String
+  published: Boolean! @default(value: false)
+  capturedByUser: User
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# HANDBOOK
+# ============================================================================
+
+type HandbookDoc @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  slug: String!
+  title: String!
+  description: String
+  body: String!
+  blastRadius: BlastRadius! @default(value: "low")
+  # Voice-specific fields (nullable for backward compatibility)
+  kind: HandbookDocKind @default(value: "DOCUMENT")
+  inheritsFrom: HandbookDoc           # For VOICE_SCENARIO: parent doc reference
+  triggerExpr: String                 # For VOICE_SCENARIO: when this applies
+  affectsSurfaces: String             # JSON array of VoiceSurface values
+  pinned: Boolean @default(value: false)  # For VOICE_CORE: always show first
+  chapterNum: Int                     # For VOICE_FOUNDATION: 1-6 numbering
+  usedInDraftsToday: Int @default(value: 0)  # Usage tracking
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type HandbookVersion @table {
+  id: UUID! @default(expr: "uuidV4()")
+  doc: HandbookDoc!
+  body: String!
+  editedByUser: User
+  editedAt: Timestamp! @default(expr: "request.time")
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# PLAYBOOKS - Global Catalog + Workspace Customization
+# ============================================================================
+
+# Reusable milestone blocks (global, institutional knowledge)
+# These encode best practices: "SSO setup typically takes 5-7 days"
+type MilestoneBlock @table {
+  id: UUID! @default(expr: "uuidV4()")
+  slug: String! @unique  # "sso-setup", "data-migration", "kickoff-call"
+  name: String!
+  description: String
+  ownerSide: OwnerSide! @default(value: "joint")
+  typicalDays: Int!  # Default duration
+  minDays: Int       # Minimum reasonable duration
+  maxDays: Int       # Maximum reasonable duration
+  category: BlockCategory!
+  prerequisites: String  # JSON array of block slugs that should come before
+  tags: String           # JSON array: ["technical", "enterprise", "compliance"]
+  isActive: Boolean! @default(value: true)
+  sortOrder: Int! @default(value: 0)
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# Global playbook templates (catalog, accessible to all workspaces)
+type PlaybookTemplate @table {
+  id: UUID! @default(expr: "uuidV4()")
+  slug: String! @unique  # "quick-start", "standard-saas", "enterprise"
+  name: String!
+  description: String
+  complexity: PlaybookComplexity!
+  estimatedDays: Int!
+  fitCriteria: String    # JSON: conditions when AI should suggest this
+  isActive: Boolean! @default(value: true)
+  sortOrder: Int! @default(value: 0)
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# Links templates to blocks (composition)
+type PlaybookTemplateBlock @table(key: ["template", "block"]) {
+  template: PlaybookTemplate!
+  block: MilestoneBlock!
+  sortOrder: Int! @default(value: 0)
+  durationOverride: Int    # Optional: override block's typicalDays
+  isRequired: Boolean! @default(value: true)  # Can AI skip this block?
+}
+
+# Workspace-specific playbooks (customized from templates or created from scratch)
+enum PlaybookScenario {
+  onboarding   # new-customer onboarding plan (the existing default)
+  renewal      # renewal-prep play
+  risk         # risk/save play — adapted by the orchestrator's risk strategist
+}
+
+type Playbook @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  name: String!
+  archetype: String
+  fitNote: String
+  # Which CS scenario this playbook templates. Existing playbooks default to
+  # onboarding so nothing changes; risk playbooks are picked up by the orchestrator.
+  scenario: PlaybookScenario! @default(value: "onboarding")
+  drawnFromCount: Int! @default(value: 0)
+  # Link to catalog template if adopted
+  adoptedFromTemplate: PlaybookTemplate
+  # Learning metrics - AI uses these to prioritize
+  timesUsed: Int! @default(value: 0)
+  timesAccepted: Int! @default(value: 0)     # Accepted without major edits
+  timesEdited: Int! @default(value: 0)       # Accepted with edits
+  timesRejected: Int! @default(value: 0)
+  lastUsedAt: Timestamp
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type PlaybookMilestone @table {
+  id: UUID! @default(expr: "uuidV4()")
+  playbook: Playbook!
+  title: String!
+  ownerSide: OwnerSide! @default(value: "joint")
+  durationDays: Int
+  description: String
+  sortOrder: Int! @default(value: 0)
+  # Link to source block if composed from catalog
+  sourceBlock: MilestoneBlock
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# Track edits users make to playbooks (for learning patterns)
+type PlaybookEdit @table {
+  id: UUID! @default(expr: "uuidV4()")
+  playbook: Playbook!
+  workspace: Workspace!
+  editType: PlaybookEditType!
+  milestoneName: String        # Which milestone was edited
+  originalValue: String        # JSON: what it was before
+  newValue: String             # JSON: what it became
+  editedByUser: User
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# AGENT STATE & RUNS
+# ============================================================================
+
+type AgentState @table(key: ["workspace", "key"]) {
+  workspace: Workspace!
+  key: String!  # gmail_watermark, slack_watermark, etc.
+  value: String
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type AgentRun @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  agentName: String!
+  status: AgentStatus! @default(value: "initialized")
+  triggerType: String
+  triggeredBy: String
+  inputParams: String! @default(value: "{}")  # JSON
+  currentStep: String
+  contextSnapshot: String  # JSON
+  confidenceLevel: ConfidenceLevel
+  confidenceScore: Float
+  confidenceReasons: String  # JSON array
+  pausedAt: Timestamp
+  pauseReason: String
+  blockingNeed: Need
+  clarifyingQuestions: String  # JSON
+  resumedAt: Timestamp
+  resumeAnswers: String  # JSON
+  customer: Customer
+  brief: HandoffBrief
+  plan: AiPlan
+  result: String  # JSON
+  errorMessage: String
+  usedFallback: Boolean @default(value: false)
+  fallbackReason: String
+  startedAt: Timestamp
+  completedAt: Timestamp
+  durationMs: Int
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# Orchestrator work queue (net-new). Decouples *what triggers work* from *what
+# does work*; durable, retryable, restart-safe HITL. Owned by the orchestrator
+# module — handoff_auto does not use this table.
+type AgentTask @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer                                    # null for workspace-level tasks
+  taskType: String!                                     # triage_signal | reflect_account | renewal_check | follow_up | ...
+  triggerType: String! @default(value: "demo")          # demo | signal | schedule | play | user
+  payload: String! @default(value: "{}")                # JSON — the event/context that produced the task
+  status: AgentTaskStatus! @default(value: "pending")
+  priority: Int! @default(value: 100)                   # lower = higher priority
+  scheduledFor: Timestamp! @default(expr: "request.time")  # earliest claim time (enables self-scheduled follow-ups)
+  attempts: Int! @default(value: 0)
+  blockingNeed: Need                                    # set when paused for HITL
+  agentRun: AgentRun                                    # the run that processed this task (progress streaming)
+  result: String                                        # JSON outcome
+  errorMessage: String
+  claimedAt: Timestamp
+  completedAt: Timestamp
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# WORKSPACE INTEGRATIONS
+# ============================================================================
+
+type WorkspaceIntegration @table(name: "workspace_integrations", key: ["workspace", "integrationType"]) {
+  workspace: Workspace!
+  integrationType: IntegrationType!
+  accessToken: String
+  refreshToken: String
+  tokenExpiresAt: Timestamp
+  config: String! @default(value: "{}")  # JSON
+  status: IntegrationStatus! @default(value: "pending")
+  slackTeamId: String  # Slack workspace/team ID for this integration
+  lastSyncAt: Timestamp
+  lastError: String
+  errorCount: Int @default(value: 0)
+  connectedByUser: User
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type ProcessedDeal @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  notionDealId: String!
+  agentRun: AgentRun
+  customer: Customer
+  brief: HandoffBrief
+  status: String! @default(value: "processed")
+  skipReason: String
+  processedAt: Timestamp! @default(expr: "request.time")
+}
+
+type WorkspaceAgentSetting @table(key: ["workspace", "agentName"]) {
+  workspace: Workspace!
+  agentName: String!
+  autonomyMode: String! @default(value: "smart_auto")
+  pauseOnMediumConfidence: Boolean @default(value: true)
+  questionTimeoutHours: Int @default(value: 24)
+  fallbackOnTimeout: Boolean @default(value: true)
+  notifyOnPause: Boolean @default(value: true)
+  notifyOnComplete: Boolean @default(value: false)
+  notificationChannel: String @default(value: "app")
+  pollEnabled: Boolean @default(value: true)
+  pollIntervalMinutes: Int @default(value: 15)
+  enabled: Boolean @default(value: true)
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# OAUTH STATE MANAGEMENT
+# ============================================================================
+
+type OAuthState @table(name: "oauth_states") {
+  id: UUID! @default(expr: "uuidV4()")
+  state: String! @unique
+  workspace: Workspace!
+  integrationType: IntegrationType!
+  userId: String!
+  redirectUri: String!
+  codeVerifier: String
+  createdAt: Timestamp! @default(expr: "request.time")
+  expiresAt: Timestamp!
+  consumed: Boolean! @default(value: false)
+}
+
+# ============================================================================
+# CHANGE EVENTS (SignalWatcher Ingestion Pipeline)
+# ============================================================================
+
+type ChangeEvent @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer
+  source: ChangeEventSource!
+  sourceEventType: String!  # e.g., "message.created", "email.received"
+  sourceRecordId: String    # External ID from source system
+  fingerprint: String! @unique  # Dedup key
+  rawPayload: String!       # JSON of original event
+  occurredAt: Timestamp!
+  processed: Boolean! @default(value: false)
+  processedAt: Timestamp
+  processingError: String
+  eventClass: ChangeEventClass
+  artifactsCreated: String  # JSON array of created artifact IDs
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# SIDEKICK ITEMS (AI Assistant UI State)
+# ============================================================================
+
+type SidekickItem @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  type: SidekickItemType!
+  # For 'asking' type
+  question: String
+  why: String
+  isBlocking: Boolean @default(value: false)
+  # For 'tip' type
+  text: String
+  # For 'doing' type
+  task: String
+  step: String
+  stepNum: Int
+  totalSteps: Int
+  # Resolution tracking
+  resolution: String
+  resolvedByUser: User
+  resolvedAt: Timestamp
+  timestampLabel: String
+  # Links
+  agentRun: AgentRun
+  need: Need
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# AGENT RUN ANSWERS (HITL)
+# ============================================================================
+
+type AgentRunAnswer @table {
+  id: UUID! @default(expr: "uuidV4()")
+  agentRun: AgentRun!
+  questionId: String!  # ID of the question being answered
+  answerText: String!
+  answeredByUser: User
+  answeredAt: Timestamp! @default(expr: "request.time")
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# SIGNAL FINGERPRINTS (Deduplication)
+# ============================================================================
+
+type SignalFingerprint @table(key: ["workspace", "fingerprint"]) {
+  workspace: Workspace!
+  fingerprint: String!
+  processedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# METRIC SNAPSHOTS (time-series substrate — see docs/plans/SIGNAL_AGGREGATION.md)
+# Append-only log of every tracked score/state change. Never overwritten.
+# Append-on-change is primary; the sweep adds a daily heartbeat row per metric.
+# Plain @table (UUID PK, no composite key): MANY rows per customer/metric/day.
+# metric  (String catalog, not enum so it can grow without schema edits):
+#   health_score | engagement | sentiment | engagement_health | vector_<category>
+# trigger (String catalog):
+#   scheduled_daily | risk_signal | commitment_change | play_completed |
+#   manual_override | inbound | sweep | assessment
+# ============================================================================
+
+type MetricSnapshot @table {
+  id: UUID! @default(expr: "uuidV4()")
+  workspace: Workspace!
+  customer: Customer!
+  stakeholder: Stakeholder       # null = account-level (FK present; populated in a later phase)
+  metric: String!                # catalog key — see comment above
+  value: Float                   # numeric value where it applies (null for state-only metrics)
+  state: String                  # "ok" | "warn" | "risk" where it applies (null for numeric-only)
+  prevValue: Float               # prior numeric value (null when no prior snapshot exists)
+  trigger: String!               # what caused this append — see comment above
+  inputs: String!                # JSON — contributing factors behind this value (explainability)
+  capturedAt: Timestamp! @default(expr: "request.time")
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# ============================================================================
+# WAITLIST
+# ============================================================================
+
+type WaitlistSignup @table {
+  id: UUID! @default(expr: "uuidV4()")
+  email: String! @unique
+  source: String  # Where they signed up from
+  signedUpAt: Timestamp! @default(expr: "request.time")
+}

@@ -1,0 +1,4071 @@
+# Herofy Mutations
+# These mutations handle data creation and updates
+
+# ============================================================================
+# USER & WORKSPACE
+# ============================================================================
+
+# Upsert user on login (creates or updates based on Firebase Auth UID)
+mutation UpsertUser($email: String!, $displayName: String, $avatarUrl: String) @auth(level: USER) {
+  user_upsert(
+    data: {
+      id_expr: "auth.uid"
+      email: $email
+      displayName: $displayName
+      avatarUrl: $avatarUrl
+    }
+  )
+}
+
+# Create a new workspace
+mutation CreateWorkspace($name: String!, $slug: String!) @auth(level: USER) {
+  workspace_insert(data: { name: $name, slug: $slug })
+}
+
+# Update workspace name and value prop
+mutation UpdateWorkspace($id: UUID!, $name: String!, $slug: String!, $valueProp: String) @auth(level: USER) @transaction {
+  # RBAC gate: caller must be a member of this workspace.
+  query @redact {
+    workspace(id: $id) @check(expr: "this != null", message: "Workspace not found") {
+      workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+        @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+    }
+  }
+  workspace_update(
+    id: $id
+    data: { name: $name, slug: $slug, valueProp: $valueProp }
+  )
+}
+
+# Mark workspace setup as complete
+mutation CompleteWorkspaceSetup($workspaceId: UUID!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  workspace_update(
+    id: $workspaceId
+    data: { setupCompleted: true }
+  )
+}
+
+# Mark user's workspace setup as complete (updates the per-user hasCompletedSetup flag)
+mutation CompleteUserWorkspaceSetup($workspaceId: UUID!, $userId: String!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  workspaceMember_update(
+    key: { workspaceId: $workspaceId, userId: $userId }
+    data: { hasCompletedSetup: true }
+  )
+}
+
+# Mark user's workspace setup as complete (PUBLIC - for seeding/testing)
+mutation CompleteUserWorkspaceSetupPublic($workspaceId: UUID!, $userId: String!) @auth(level: NO_ACCESS) {
+  workspaceMember_update(
+    key: { workspaceId: $workspaceId, userId: $userId }
+    data: { hasCompletedSetup: true }
+  )
+}
+
+# Add user to workspace
+mutation AddWorkspaceMember($workspaceId: UUID!, $userId: String!, $role: WorkspaceRole!, $hasCompletedSetup: Boolean) @auth(level: USER) @transaction {
+  # RBAC gate: allow only (a) bootstrapping a brand-new workspace (no members yet — the creator adds
+  # themselves as owner during provisioning) OR (b) additions by an existing owner/admin of the
+  # workspace (the join-approval path). Without this, any authenticated user could self-insert as
+  # owner of an arbitrary workspace and thereby satisfy every membership @check added elsewhere.
+  query @redact {
+    workspaceMembers(where: { workspaceId: { eq: $workspaceId } }) @check(
+      expr: "this.size() == 0 || this.exists(m, m.userId == auth.uid && (m.role == 'owner' || m.role == 'admin'))"
+      message: "Not authorized to add members to this workspace"
+    ) {
+      userId
+      role
+    }
+  }
+  workspaceMember_insert(
+    data: {
+      workspaceId: $workspaceId
+      userId: $userId
+      role: $role
+      hasCompletedSetup: $hasCompletedSetup
+    }
+  )
+}
+
+# Update workspace member role
+mutation UpdateMemberRole($workspaceId: UUID!, $userId: String!, $role: WorkspaceRole!) @auth(level: NO_ACCESS) {
+  workspaceMember_update(
+    key: { workspaceId: $workspaceId, userId: $userId }
+    data: { role: $role }
+  )
+}
+
+# Remove workspace member
+mutation RemoveWorkspaceMember($workspaceId: UUID!, $userId: String!) @auth(level: NO_ACCESS) {
+  workspaceMember_delete(
+    key: { workspaceId: $workspaceId, userId: $userId }
+  )
+}
+
+# Remove workspace member (PUBLIC - for seeding/testing)
+mutation RemoveWorkspaceMemberPublic($workspaceId: UUID!, $userId: String!) @auth(level: NO_ACCESS) {
+  workspaceMember_delete(
+    key: { workspaceId: $workspaceId, userId: $userId }
+  )
+}
+
+# Add workspace member (PUBLIC - for seeding/testing)
+mutation AddWorkspaceMemberPublic($workspaceId: UUID!, $userId: String!, $role: WorkspaceRole!, $hasCompletedSetup: Boolean) @auth(level: NO_ACCESS) {
+  workspaceMember_insert(
+    data: {
+      workspaceId: $workspaceId
+      userId: $userId
+      role: $role
+      hasCompletedSetup: $hasCompletedSetup
+    }
+  )
+}
+
+# Delete workspace (PUBLIC - for testing/cleanup)
+mutation DeleteWorkspacePublic($id: UUID!) @auth(level: NO_ACCESS) {
+  workspace_delete(id: $id)
+}
+
+# ============================================================================
+# WORKSPACE INVITATIONS
+# ============================================================================
+
+# Create invitation
+mutation CreateInvitation(
+  $workspaceId: UUID!
+  $email: String!
+  $role: WorkspaceRole!
+  $invitedByUserId: String!
+  $token: String!
+  $expiresAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  workspaceInvitation_insert(
+    data: {
+      workspaceId: $workspaceId
+      email: $email
+      role: $role
+      invitedByUserId: $invitedByUserId
+      token: $token
+      expiresAt: $expiresAt
+    }
+  )
+}
+
+# Accept invitation (update status)
+mutation AcceptInvitation($id: UUID!, $acceptedByUserId: String!) @auth(level: NO_ACCESS) {
+  workspaceInvitation_update(
+    id: $id
+    data: {
+      status: accepted
+      acceptedByUserId: $acceptedByUserId
+      acceptedAt_expr: "request.time"
+    }
+  )
+}
+
+# Revoke invitation
+mutation RevokeInvitation($id: UUID!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    workspaceInvitation(id: $id) @check(expr: "this != null", message: "Invitation not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  workspaceInvitation_update(
+    id: $id
+    data: { status: revoked }
+  )
+}
+
+# Delete invitation (cleanup)
+mutation DeleteInvitation($id: UUID!) @auth(level: NO_ACCESS) {
+  workspaceInvitation_delete(id: $id)
+}
+
+# ============================================================================
+# CUSTOMERS
+# ============================================================================
+
+# Create a new customer
+mutation CreateCustomer(
+  $workspaceId: UUID!
+  $name: String!
+  $slug: String!
+  $oneLiner: String
+  $tier: String
+  $arrCents: Int64
+  $lifecycle: CustomerLifecycle
+  $rawNotes: String
+  $enrichmentStatus: EnrichmentStatus
+  $externalSource: String
+  $externalId: String
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  customer_insert(
+    data: {
+      workspaceId: $workspaceId
+      name: $name
+      slug: $slug
+      oneLiner: $oneLiner
+      tier: $tier
+      arrCents: $arrCents
+      lifecycle: $lifecycle
+      rawNotes: $rawNotes
+      enrichmentStatus: $enrichmentStatus
+      externalSource: $externalSource
+      externalId: $externalId
+    }
+  )
+}
+
+# Update customer
+mutation UpdateCustomer(
+  $id: UUID!
+  $name: String
+  $oneLiner: String
+  $tier: String
+  $arrCents: Int64
+  $lifecycle: CustomerLifecycle
+  $daysToRenewal: Int
+  $renewalReadiness: RenewalReadiness
+  $valueRealizationText: String
+  $rawNotes: String
+  $enrichmentStatus: EnrichmentStatus
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    customer(id: $id) @check(expr: "this != null", message: "Customer not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  customer_update(
+    id: $id
+    data: {
+      name: $name
+      oneLiner: $oneLiner
+      tier: $tier
+      arrCents: $arrCents
+      lifecycle: $lifecycle
+      daysToRenewal: $daysToRenewal
+      renewalReadiness: $renewalReadiness
+      valueRealizationText: $valueRealizationText
+      rawNotes: $rawNotes
+      enrichmentStatus: $enrichmentStatus
+    }
+  )
+}
+
+# Update customer enrichment status (used by enrichment service)
+mutation UpdateCustomerEnrichmentStatus(
+  $id: UUID!
+  $enrichmentStatus: EnrichmentStatus!
+  $enrichmentAttempts: Int
+  $enrichmentError: String
+) @auth(level: NO_ACCESS) {
+  customer_update(
+    id: $id
+    data: {
+      enrichmentStatus: $enrichmentStatus
+      enrichmentAttempts: $enrichmentAttempts
+      enrichmentError: $enrichmentError
+    }
+  )
+}
+
+# Update customer linked pages (for multi-page external linking)
+mutation UpdateCustomerLinkedPages(
+  $id: UUID!
+  $linkedPages: String
+) @auth(level: NO_ACCESS) {
+  customer_update(
+    id: $id
+    data: {
+      linkedPages: $linkedPages
+    }
+  )
+}
+
+# Update customer AI classification (during setup)
+mutation UpdateCustomerClassification(
+  $id: UUID!
+  $group: String!
+  $confidence: Int!
+  $reasoning: String
+  $whatIKnow: String
+  $uncertainties: String
+) @auth(level: NO_ACCESS) {
+  customer_update(
+    id: $id
+    data: {
+      aiClassificationGroup: $group
+      aiClassificationConfidence: $confidence
+      aiClassificationReasoning: $reasoning
+      aiClassificationWhatIKnow: $whatIKnow
+      aiClassificationUncertainties: $uncertainties
+      aiClassificationAt_expr: "request.time"
+    }
+  )
+}
+
+# Delete a single customer by ID
+mutation DeleteCustomer($id: UUID!) @auth(level: NO_ACCESS) {
+  customer_delete(id: $id)
+}
+
+# Delete all customers for a workspace (for testing/reset)
+mutation DeleteAllCustomersForWorkspace($workspaceId: UUID!) @auth(level: USER) @transaction {
+  # RBAC gate: destructive — caller must be an owner/admin of $workspaceId (redacted; aborts if not).
+  query @redact {
+    workspaceMembers(where: { workspaceId: { eq: $workspaceId } }) @check(
+      expr: "this.exists(m, m.userId == auth.uid && (m.role == 'owner' || m.role == 'admin'))"
+      message: "Owner or admin only"
+    ) {
+      userId
+      role
+    }
+  }
+  customer_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+# Delete all customers for a workspace - PUBLIC for scripts (testing only)
+mutation DeleteAllCustomersForWorkspacePublic($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  customer_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+# Complete customer enrichment (updates oneLiner and marks complete)
+mutation CompleteCustomerEnrichment(
+  $id: UUID!
+  $oneLiner: String
+  $enrichmentStatus: EnrichmentStatus!
+) @auth(level: NO_ACCESS) {
+  customer_update(
+    id: $id
+    data: {
+      oneLiner: $oneLiner
+      enrichmentStatus: $enrichmentStatus
+      enrichmentCompletedAt_expr: "request.time"
+    }
+  )
+}
+
+# ============================================================================
+# STAKEHOLDERS
+# ============================================================================
+
+# Create stakeholder
+mutation CreateStakeholder(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $name: String!
+  $email: String
+  $role: String
+  $sentimentNote: String
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  stakeholder_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      name: $name
+      email: $email
+      role: $role
+      sentimentNote: $sentimentNote
+    }
+  )
+}
+
+# Update stakeholder
+mutation UpdateStakeholder(
+  $id: UUID!
+  $name: String
+  $email: String
+  $role: String
+  $status: StakeholderStatus
+  $sentimentNote: String
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    stakeholder(id: $id) @check(expr: "this != null", message: "Stakeholder not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  stakeholder_update(
+    id: $id
+    data: {
+      name: $name
+      email: $email
+      role: $role
+      status: $status
+      sentimentNote: $sentimentNote
+    }
+  )
+}
+
+# Delete stakeholder
+mutation DeleteStakeholder($id: UUID!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    stakeholder(id: $id) @check(expr: "this != null", message: "Stakeholder not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  stakeholder_delete(id: $id)
+}
+
+# ============================================================================
+# GOALS
+# ============================================================================
+
+# Create goal
+mutation CreateGoal(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $text: String!
+  $status: GoalStatus
+  $sortOrder: Int
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  goal_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      text: $text
+      status: $status
+      sortOrder: $sortOrder
+    }
+  )
+}
+
+# Update goal
+mutation UpdateGoal($id: UUID!, $text: String, $status: GoalStatus, $sortOrder: Int) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    goal(id: $id) @check(expr: "this != null", message: "Goal not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  goal_update(
+    id: $id
+    data: { text: $text, status: $status, sortOrder: $sortOrder }
+  )
+}
+
+# Set a goal as the primary goal (Mission Objective) for a customer
+# Clears isPrimary on other goals for the same customer first
+mutation SetPrimaryGoal($goalId: UUID!, $customerId: UUID!) @auth(level: NO_ACCESS) {
+  # First clear any existing primary goal for this customer
+  goal_updateMany(
+    where: { customerId: { eq: $customerId }, isPrimary: { eq: true } }
+    data: { isPrimary: false }
+  )
+  # Then set the specified goal as primary
+  goal_update(
+    id: $goalId
+    data: { isPrimary: true }
+  )
+}
+
+# Delete goal
+mutation DeleteGoal($id: UUID!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    goal(id: $id) @check(expr: "this != null", message: "Goal not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  goal_delete(id: $id)
+}
+
+# ============================================================================
+# PROGRESS VECTORS
+# ============================================================================
+
+# Create progress vector (for agent or user)
+mutation CreateProgressVector(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $goalId: UUID!
+  $category: VectorCategory!
+  $description: String!
+  $currentState: SignalState!
+  $progress: Float
+  $targetProgress: Float
+  $targetLabel: String
+  $unlocks: String
+  $assessmentReason: String
+  $lastAssessedBy: String
+) @auth(level: NO_ACCESS) {
+  progressVector_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      goalId: $goalId
+      category: $category
+      description: $description
+      currentState: $currentState
+      progress: $progress
+      targetProgress: $targetProgress
+      targetLabel: $targetLabel
+      unlocks: $unlocks
+      assessmentReason: $assessmentReason
+      lastAssessedBy: $lastAssessedBy
+    }
+  )
+}
+
+# Update progress vector state
+mutation UpdateProgressVector(
+  $id: UUID!
+  $currentState: SignalState
+  $progress: Float
+  $targetProgress: Float
+  $targetLabel: String
+  $unlocks: String
+  $assessmentReason: String
+  $lastAssessedBy: String
+) @auth(level: NO_ACCESS) {
+  progressVector_update(
+    id: $id
+    data: {
+      currentState: $currentState
+      progress: $progress
+      targetProgress: $targetProgress
+      targetLabel: $targetLabel
+      unlocks: $unlocks
+      assessmentReason: $assessmentReason
+      lastAssessedBy: $lastAssessedBy
+      lastAssessedAt_expr: "request.time"
+    }
+  )
+}
+
+# Delete progress vector
+mutation DeleteProgressVector($id: UUID!) @auth(level: NO_ACCESS) {
+  progressVector_delete(id: $id)
+}
+
+# ============================================================================
+# CUSTOMER STRATEGY
+# ============================================================================
+
+# NOTE: there is no `UpsertCustomerStrategy` — CustomerStrategy has no unique key on `customer`, so
+# DataConnect can't express a keyless upsert (the connector build rejects it). The backend does
+# find-then-update-or-create: GetCustomerStrategy + UpdateCustomerStrategy / CreateCustomerStrategyWithId.
+
+# Update customer strategy body
+mutation UpdateCustomerStrategy(
+  $id: UUID!
+  $body: String!
+  $lastUpdatedBy: String
+) @auth(level: NO_ACCESS) {
+  customerStrategy_update(
+    id: $id
+    data: {
+      body: $body
+      lastUpdatedBy: $lastUpdatedBy
+      updatedAt_expr: "request.time"
+    }
+  )
+}
+
+# Delete customer strategy
+mutation DeleteCustomerStrategy($id: UUID!) @auth(level: NO_ACCESS) {
+  customerStrategy_delete(id: $id)
+}
+
+# ============================================================================
+# MILESTONES
+# ============================================================================
+
+# Create milestone
+mutation CreateMilestone(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $title: String!
+  $ownerLabel: String
+  $ownerSide: OwnerSide
+  $targetDate: Date
+  $description: String
+  $sortOrder: Int
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  milestone_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      title: $title
+      ownerLabel: $ownerLabel
+      ownerSide: $ownerSide
+      targetDate: $targetDate
+      description: $description
+      sortOrder: $sortOrder
+    }
+  )
+}
+
+# Update milestone
+mutation UpdateMilestone(
+  $id: UUID!
+  $title: String
+  $ownerLabel: String
+  $ownerSide: OwnerSide
+  $targetDate: Date
+  $status: MilestoneStatus
+  $description: String
+  $blockedReason: String
+  $sortOrder: Int
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    milestone(id: $id) @check(expr: "this != null", message: "Milestone not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  milestone_update(
+    id: $id
+    data: {
+      title: $title
+      ownerLabel: $ownerLabel
+      ownerSide: $ownerSide
+      targetDate: $targetDate
+      status: $status
+      description: $description
+      blockedReason: $blockedReason
+      sortOrder: $sortOrder
+    }
+  )
+}
+
+# Delete milestone
+mutation DeleteMilestone($id: UUID!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    milestone(id: $id) @check(expr: "this != null", message: "Milestone not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  milestone_delete(id: $id)
+}
+
+# Update milestone goal linkage (for goal-centric architecture)
+mutation UpdateMilestoneGoal(
+  $id: UUID!
+  $goalId: UUID
+  $goalRationale: String
+) @auth(level: NO_ACCESS) {
+  milestone_update(
+    id: $id
+    data: {
+      goalId: $goalId
+      goalRationale: $goalRationale
+    }
+  )
+}
+
+# ============================================================================
+# COMMITMENTS
+# ============================================================================
+
+# Create commitment
+mutation CreateCommitment(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $side: CommitmentSide!
+  $text: String!
+  $dueLabel: String
+  $dueDate: Date
+  $stake: String
+  $stakeHolderId: UUID
+) @auth(level: NO_ACCESS) {
+  commitment_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      side: $side
+      text: $text
+      dueLabel: $dueLabel
+      dueDate: $dueDate
+      stake: $stake
+      stakeHolderId: $stakeHolderId
+    }
+  )
+}
+
+# Update commitment status
+mutation UpdateCommitment(
+  $id: UUID!
+  $text: String
+  $status: CommitmentStatus
+  $dueLabel: String
+  $dueDate: Date
+  $stake: String
+  $stakeHolderId: UUID
+) @auth(level: NO_ACCESS) {
+  commitment_update(
+    id: $id
+    data: {
+      text: $text
+      status: $status
+      dueLabel: $dueLabel
+      dueDate: $dueDate
+      stake: $stake
+      stakeHolderId: $stakeHolderId
+    }
+  )
+}
+
+# Mark a commitment delivered: sets status=done and stamps deliveredAt to now
+# (single-purpose so it never nulls other columns). Enables reliability measurement.
+mutation MarkCommitmentDelivered($id: UUID!) @auth(level: NO_ACCESS) {
+  commitment_update(
+    id: $id
+    data: { status: done, deliveredAt_expr: "request.time" }
+  )
+}
+
+# ============================================================================
+# NEEDS
+# ============================================================================
+
+# Snooze a need
+mutation SnoozeNeed($id: UUID!, $snoozedUntil: Timestamp!) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    need(id: $id) @check(expr: "this != null", message: "Need not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  need_update(id: $id, data: { snoozedUntil: $snoozedUntil, status: snoozed })
+}
+
+# Mark a Need awaiting the customer with a re-surface floor: keeps the truthful
+# awaiting_customer status (we acted — ball's in their court) but hides it from the
+# Today queue until $snoozedUntil. Used after an outreach send so a still-dark account
+# clears "what to do now" yet reappears later if they never reply (distinct from SnoozeNeed,
+# which flips status to snoozed — here the work state stays awaiting_customer).
+mutation MarkNeedAwaitingResurface($id: UUID!, $snoozedUntil: Timestamp!) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    need(id: $id) @check(expr: "this != null", message: "Need not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  need_update(id: $id, data: { snoozedUntil: $snoozedUntil, status: awaiting_customer })
+}
+
+# Resolve a need
+mutation ResolveNeed($id: UUID!) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    need(id: $id) @check(expr: "this != null", message: "Need not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  need_update(id: $id, data: { resolvedAt_expr: "request.time", status: resolved })
+}
+
+# Unresolve a need (reopen) — clears the timestamps and returns to needs_response.
+mutation UnresolveNeed($id: UUID!) @auth(level: NO_ACCESS) {
+  need_update(id: $id, data: { resolvedAt: null, snoozedUntil: null, status: needs_response })
+}
+
+# Set a Need's workflow status directly (e.g. awaiting_customer / blocked — the
+# transitions resolve/snooze don't cover).
+mutation UpdateNeedStatus($id: UUID!, $status: WorkflowStatus!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    need(id: $id) @check(expr: "this != null", message: "Need not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  need_update(id: $id, data: { status: $status })
+}
+
+# Update need priority
+mutation UpdateNeedPriority($id: UUID!, $priorityRank: Int!) @auth(level: NO_ACCESS) {
+  need_update(id: $id, data: { priorityRank: $priorityRank })
+}
+
+# ============================================================================
+# THREADS
+# ============================================================================
+
+# Create thread
+mutation CreateThread(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $needId: UUID
+  $subject: String
+  $channel: InteractionChannel
+  $threadType: ThreadType
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  thread_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      needId: $needId
+      subject: $subject
+      channel: $channel
+      threadType: $threadType
+    }
+  )
+}
+
+# Create thread with specific ID (for signal watcher)
+mutation CreateThreadWithId(
+  $id: UUID!
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $needId: UUID
+  $subject: String
+  $channel: InteractionChannel
+  $threadType: ThreadType
+  $status: ThreadStatus
+  $externalThreadId: String
+) @auth(level: NO_ACCESS) {
+  thread_insert(
+    data: {
+      id: $id
+      workspaceId: $workspaceId
+      customerId: $customerId
+      needId: $needId
+      subject: $subject
+      channel: $channel
+      threadType: $threadType
+      status: $status
+      externalThreadId: $externalThreadId
+    }
+  )
+}
+
+# Update thread status
+mutation UpdateThread(
+  $id: UUID!
+  $status: ThreadStatus
+  $category: ThreadCategory
+  $assignedUserId: String
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    thread(id: $id) @check(expr: "this != null", message: "Thread not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  thread_update(
+    id: $id
+    data: {
+      status: $status
+      category: $category
+      assignedUserId: $assignedUserId
+    }
+  )
+}
+
+# Resolve thread
+mutation ResolveThread($id: UUID!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    thread(id: $id) @check(expr: "this != null", message: "Thread not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  thread_update(
+    id: $id
+    data: { status: resolved, resolvedAt_expr: "request.time" }
+  )
+}
+
+# Link thread to a need (for signal processing)
+mutation LinkThreadToNeed($threadId: UUID!, $needId: UUID!) @auth(level: NO_ACCESS) {
+  thread_update(
+    id: $threadId
+    data: { needId: $needId }
+  )
+}
+
+# Set a Need's primary thread (the reverse of LinkThreadToNeed). GetNeedsForThread queries
+# Need.thread, so a thread opened AFTER its need (e.g. the going-dark outreach) needs this too,
+# else the conversation reads as "no needs on this thread".
+mutation LinkNeedToThread($needId: UUID!, $threadId: UUID!) @auth(level: NO_ACCESS) {
+  need_update(
+    id: $needId
+    data: { threadId: $threadId }
+  )
+}
+
+# ============================================================================
+# INTERACTIONS (MESSAGES)
+# ============================================================================
+
+# Create interaction (send message)
+mutation CreateInteraction(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $threadId: UUID
+  $channel: InteractionChannel!
+  $direction: InteractionDirection!
+  $senderName: String
+  $subject: String
+  $bodyEncrypted: String
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  interaction_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      threadId: $threadId
+      channel: $channel
+      direction: $direction
+      senderName: $senderName
+      senderUserId_expr: "auth.uid"
+      subject: $subject
+      bodyEncrypted: $bodyEncrypted
+    }
+  )
+}
+
+# Create interaction from event (signal watcher - with ID, no auth required)
+mutation CreateInteractionFromEvent(
+  $id: UUID!
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $threadId: UUID
+  $channel: InteractionChannel!
+  $direction: InteractionDirection!
+  $senderName: String
+  $stakeholderId: UUID
+  $subject: String
+  $body: String
+  $sourceEventId: String
+  $occurredAt: Timestamp
+  $interactionSource: String
+) @auth(level: NO_ACCESS) {
+  interaction_insert(
+    data: {
+      id: $id
+      workspaceId: $workspaceId
+      customerId: $customerId
+      threadId: $threadId
+      channel: $channel
+      direction: $direction
+      senderName: $senderName
+      stakeholderId: $stakeholderId
+      subject: $subject
+      bodyEncrypted: $body
+      sourceEventId: $sourceEventId
+      occurredAt: $occurredAt
+      originKind: $interactionSource
+    }
+  )
+}
+
+# ============================================================================
+# MEETINGS
+# ============================================================================
+
+# Create meeting
+mutation CreateMeeting(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $needId: UUID
+  $title: String!
+  $type: String
+  $scheduledAt: Timestamp!
+  $durationMinutes: Int
+  $attendeesOurs: String
+  $attendeesTheirs: String
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  meeting_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      needId: $needId
+      title: $title
+      type: $type
+      scheduledAt: $scheduledAt
+      durationMinutes: $durationMinutes
+      attendeesOurs: $attendeesOurs
+      attendeesTheirs: $attendeesTheirs
+    }
+  )
+}
+
+# Update meeting
+mutation UpdateMeeting(
+  $id: UUID!
+  $title: String
+  $type: String
+  $scheduledAt: Timestamp
+  $durationMinutes: Int
+  $status: MeetingStatus
+  $linkStatus: MeetingLinkStatus
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    meeting(id: $id) @check(expr: "this != null", message: "Meeting not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  meeting_update(
+    id: $id
+    data: {
+      title: $title
+      type: $type
+      scheduledAt: $scheduledAt
+      durationMinutes: $durationMinutes
+      status: $status
+      linkStatus: $linkStatus
+    }
+  )
+}
+
+# Create meeting from calendar event (used by SignalWatcher)
+mutation CreateMeetingFromCalendarEvent(
+  $id: UUID!
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $title: String!
+  $scheduledAt: Timestamp!
+  $durationMinutes: Int
+  $attendeesOurs: String
+  $attendeesTheirs: String
+  $status: MeetingStatus
+  $externalEventId: String
+  $recurringEventId: String
+  $linkStatus: MeetingLinkStatus
+) @auth(level: NO_ACCESS) {
+  meeting_insert(
+    data: {
+      id: $id
+      workspaceId: $workspaceId
+      customerId: $customerId
+      title: $title
+      scheduledAt: $scheduledAt
+      durationMinutes: $durationMinutes
+      attendeesOurs: $attendeesOurs
+      attendeesTheirs: $attendeesTheirs
+      source: google_calendar
+      status: $status
+      externalEventId: $externalEventId
+      recurringEventId: $recurringEventId
+      linkStatus: $linkStatus
+    }
+  )
+}
+
+# Update meeting from calendar event (link to need)
+mutation UpdateMeetingFromCalendarEvent(
+  $id: UUID!
+  $needId: UUID
+) @auth(level: NO_ACCESS) {
+  meeting_update(
+    id: $id
+    data: {
+      needId: $needId
+    }
+  )
+}
+
+# ============================================================================
+# HANDOFFS & AI PLANS
+# ============================================================================
+
+# Update handoff brief status
+mutation UpdateHandoffStatus($id: UUID!, $status: HandoffStatus!, $userCorrections: String) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    handoffBrief(id: $id) @check(expr: "this != null", message: "Handoff not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  handoffBrief_update(
+    id: $id
+    data: {
+      status: $status
+      userCorrections: $userCorrections
+      confirmedByUserId_expr: "auth.uid"
+      confirmedAt_expr: "request.time"
+    }
+  )
+}
+
+# Approve AI plan
+mutation ApprovePlan($id: UUID!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    aiPlan(id: $id) @check(expr: "this != null", message: "Plan not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  aiPlan_update(
+    id: $id
+    data: {
+      status: approved
+      approvedByUserId_expr: "auth.uid"
+      approvedAt_expr: "request.time"
+    }
+  )
+}
+
+# Reject AI plan
+mutation RejectPlan($id: UUID!, $rejectionReason: String!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    aiPlan(id: $id) @check(expr: "this != null", message: "Plan not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  aiPlan_update(
+    id: $id
+    data: {
+      status: rejected
+      rejectionReason: $rejectionReason
+    }
+  )
+}
+
+# Mark plan as human edited
+mutation MarkPlanEdited($id: UUID!, $milestones: String!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    aiPlan(id: $id) @check(expr: "this != null", message: "Plan not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  aiPlan_update(
+    id: $id
+    data: {
+      humanEdited: true
+      milestones: $milestones
+    }
+  )
+}
+
+# Update plan milestones (without marking as human edited - for agent updates)
+mutation UpdatePlanMilestones(
+  $id: UUID!
+  $milestones: String!
+  $milestoneCount: Int
+  $durationLabel: String
+) @auth(level: NO_ACCESS) {
+  aiPlan_update(
+    id: $id
+    data: {
+      milestones: $milestones
+      milestoneCount: $milestoneCount
+      durationLabel: $durationLabel
+    }
+  )
+}
+
+# ============================================================================
+# MEETING BRIEFS
+# ============================================================================
+
+# Create a meeting brief (generated by AI for meeting prep)
+mutation CreateMeetingBrief(
+  $workspaceId: UUID!
+  $meetingId: UUID!
+  $progressNarrative: String
+  $progressFacts: String
+  $friction: String
+  $talkingPoints: String
+  $valueDelivered: String
+  $riskToRenewal: String
+  $expansionSignals: String
+  $pricingContext: String
+  $followupEmail: String
+  $model: String!
+  $promptVersion: String!
+  $inputsHash: String!
+  $handbookVersionId: UUID!
+) @auth(level: NO_ACCESS) {
+  meetingBrief_insert(
+    data: {
+      workspaceId: $workspaceId
+      meetingId: $meetingId
+      progressNarrative: $progressNarrative
+      progressFacts: $progressFacts
+      friction: $friction
+      talkingPoints: $talkingPoints
+      valueDelivered: $valueDelivered
+      riskToRenewal: $riskToRenewal
+      expansionSignals: $expansionSignals
+      pricingContext: $pricingContext
+      followupEmail: $followupEmail
+      model: $model
+      promptVersion: $promptVersion
+      inputsHash: $inputsHash
+      handbookVersionId: $handbookVersionId
+    }
+  )
+}
+
+# Update meeting brief
+mutation UpdateMeetingBrief(
+  $id: UUID!
+  $progressNarrative: String
+  $progressFacts: String
+  $friction: String
+  $talkingPoints: String
+  $valueDelivered: String
+  $riskToRenewal: String
+  $expansionSignals: String
+  $pricingContext: String
+  $followupEmail: String
+) @auth(level: NO_ACCESS) {
+  meetingBrief_update(
+    id: $id
+    data: {
+      progressNarrative: $progressNarrative
+      progressFacts: $progressFacts
+      friction: $friction
+      talkingPoints: $talkingPoints
+      valueDelivered: $valueDelivered
+      riskToRenewal: $riskToRenewal
+      expansionSignals: $expansionSignals
+      pricingContext: $pricingContext
+      followupEmail: $followupEmail
+    }
+  )
+}
+
+# ============================================================================
+# DRAFT RESPONSES
+# ============================================================================
+
+# Create a draft response (PUBLIC for backend service)
+mutation CreateDraftResponse(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $threadId: UUID
+  $subject: String
+  $body: String!
+  $citations: String
+  $surfacedInNeedId: UUID
+  $model: String!
+  $promptVersion: String!
+  $handbookVersionId: UUID!
+) @auth(level: NO_ACCESS) {
+  draftResponse_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      threadId: $threadId
+      subject: $subject
+      body: $body
+      citations: $citations
+      surfacedInNeedId: $surfacedInNeedId
+      model: $model
+      promptVersion: $promptVersion
+      handbookVersionId: $handbookVersionId
+    }
+  )
+}
+
+# Approve draft response
+mutation ApproveDraftResponse($id: UUID!, $editedBody: String) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    draftResponse(id: $id) @check(expr: "this != null", message: "Draft not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  draftResponse_update(
+    id: $id
+    data: {
+      status: approved
+      editedBody: $editedBody
+      approvedByUserId_expr: "auth.uid"
+      approvedAt_expr: "request.time"
+    }
+  )
+}
+
+# Discard draft response
+mutation DiscardDraftResponse($id: UUID!) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    draftResponse(id: $id) @check(expr: "this != null", message: "Draft not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  draftResponse_update(id: $id, data: { status: discarded })
+}
+
+# Mark draft as sent
+mutation MarkDraftSent($id: UUID!) @auth(level: NO_ACCESS) {
+  draftResponse_update(
+    id: $id
+    data: { status: sent, sentAt_expr: "request.time" }
+  )
+}
+
+# ============================================================================
+# AGENT RUNS
+# ============================================================================
+
+# Create an agent run (PUBLIC for backend service)
+mutation CreateAgentRun(
+  $workspaceId: UUID!
+  $agentName: String!
+  $triggerType: String
+  $triggeredBy: String
+  $inputParams: String
+) @auth(level: NO_ACCESS) {
+  agentRun_insert(
+    data: {
+      workspaceId: $workspaceId
+      agentName: $agentName
+      status: initialized
+      triggerType: $triggerType
+      triggeredBy: $triggeredBy
+      inputParams: $inputParams
+    }
+  )
+}
+
+# Start an agent run (transition to running)
+mutation StartAgentRun($id: UUID!) @auth(level: NO_ACCESS) {
+  agentRun_update(
+    id: $id
+    data: {
+      status: running
+      startedAt_expr: "request.time"
+    }
+  )
+}
+
+# Update agent run step
+mutation UpdateAgentRunStep($id: UUID!, $currentStep: String!, $contextSnapshot: String) @auth(level: NO_ACCESS) {
+  agentRun_update(
+    id: $id
+    data: {
+      currentStep: $currentStep
+      contextSnapshot: $contextSnapshot
+    }
+  )
+}
+
+# Pause agent run for input
+mutation PauseAgentRun(
+  $id: UUID!
+  $pauseReason: String!
+  $confidenceLevel: ConfidenceLevel
+  $confidenceScore: Float
+  $confidenceReasons: String
+  $clarifyingQuestions: String
+  $blockingNeedId: UUID
+  $contextSnapshot: String
+) @auth(level: NO_ACCESS) {
+  agentRun_update(
+    id: $id
+    data: {
+      status: waiting_for_input
+      pauseReason: $pauseReason
+      confidenceLevel: $confidenceLevel
+      confidenceScore: $confidenceScore
+      confidenceReasons: $confidenceReasons
+      clarifyingQuestions: $clarifyingQuestions
+      blockingNeedId: $blockingNeedId
+      contextSnapshot: $contextSnapshot
+      pausedAt_expr: "request.time"
+    }
+  )
+}
+
+# Resume agent run (transition to resuming)
+mutation ResumeAgentRun($id: UUID!, $resumeAnswers: String!) @auth(level: NO_ACCESS) {
+  agentRun_update(
+    id: $id
+    data: {
+      status: resuming
+      resumeAnswers: $resumeAnswers
+      resumedAt_expr: "request.time"
+    }
+  )
+}
+
+# Mark agent run as running after resume
+mutation MarkAgentRunRunning($id: UUID!) @auth(level: NO_ACCESS) {
+  agentRun_update(
+    id: $id
+    data: {
+      status: running
+    }
+  )
+}
+
+# Complete agent run successfully
+mutation CompleteAgentRun(
+  $id: UUID!
+  $result: String
+  $customerId: UUID
+  $briefId: UUID
+  $planId: UUID
+  $usedFallback: Boolean
+  $fallbackReason: String
+  $durationMs: Int
+) @auth(level: NO_ACCESS) {
+  agentRun_update(
+    id: $id
+    data: {
+      status: completed
+      result: $result
+      customerId: $customerId
+      briefId: $briefId
+      planId: $planId
+      usedFallback: $usedFallback
+      fallbackReason: $fallbackReason
+      durationMs: $durationMs
+      completedAt_expr: "request.time"
+    }
+  )
+}
+
+# Fail agent run
+mutation FailAgentRun($id: UUID!, $errorMessage: String!, $contextSnapshot: String, $durationMs: Int) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must belong to the agentRun's workspace (derived from $id; aborts if not).
+  query @redact {
+    agentRun(id: $id) @check(expr: "this != null", message: "Agent run not found") {
+      workspace {
+        workspaceMembers_on_workspace(
+          where: { userId: { eq_expr: "auth.uid" } }
+          limit: 1
+        ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+          role
+        }
+      }
+    }
+  }
+  agentRun_update(
+    id: $id
+    data: {
+      status: failed
+      errorMessage: $errorMessage
+      contextSnapshot: $contextSnapshot
+      durationMs: $durationMs
+      completedAt_expr: "request.time"
+    }
+  )
+}
+
+# Link plan to agent run (for plan approval flow)
+mutation SetAgentRunPlan($id: UUID!, $planId: UUID!) @auth(level: NO_ACCESS) {
+  agentRun_update(
+    id: $id
+    data: {
+      planId: $planId
+    }
+  )
+}
+
+# Upsert agent state (for watermarks, etc.)
+mutation UpsertAgentState(
+  $workspaceId: UUID!
+  $key: String!
+  $value: String!
+) @auth(level: NO_ACCESS) {
+  agentState_upsert(
+    data: {
+      workspaceId: $workspaceId
+      key: $key
+      value: $value
+    }
+  )
+}
+
+# Delete agent state (for resetting watermarks)
+mutation DeleteAgentState(
+  $workspaceId: UUID!
+  $stateKey: String!
+) @auth(level: NO_ACCESS) {
+  agentState_delete(
+    key: {
+      workspaceId: $workspaceId
+      key: $stateKey
+    }
+  )
+}
+
+# Create agent run already in waiting_for_input state (for seeding/testing HITL)
+mutation CreateWaitingAgentRunForTest(
+  $id: UUID!
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $agentName: String!
+  $pauseReason: String!
+  $currentStep: String
+  $confidenceLevel: ConfidenceLevel
+  $clarifyingQuestions: String
+) @auth(level: NO_ACCESS) {
+  agentRun_insert(
+    data: {
+      id: $id
+      workspaceId: $workspaceId
+      customerId: $customerId
+      agentName: $agentName
+      status: waiting_for_input
+      pauseReason: $pauseReason
+      currentStep: $currentStep
+      confidenceLevel: $confidenceLevel
+      clarifyingQuestions: $clarifyingQuestions
+    }
+  )
+}
+
+# Submit answers to agent clarifying questions (USER level for UI)
+mutation SubmitAgentAnswers($id: UUID!, $resumeAnswers: String!) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    agentRun(id: $id) @check(expr: "this != null", message: "Agent run not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  agentRun_update(
+    id: $id
+    data: {
+      status: resuming
+      resumeAnswers: $resumeAnswers
+      resumedAt_expr: "request.time"
+    }
+  )
+}
+
+# ============================================================================
+# HANDBOOK
+# ============================================================================
+
+# Create handbook doc
+mutation CreateHandbookDoc(
+  $workspaceId: UUID!
+  $slug: String!
+  $title: String!
+  $description: String
+  $body: String!
+  $blastRadius: BlastRadius
+  $kind: HandbookDocKind
+  $inheritsFromId: UUID
+  $triggerExpr: String
+  $affectsSurfaces: String
+  $pinned: Boolean
+  $chapterNum: Int
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  handbookDoc_insert(
+    data: {
+      workspaceId: $workspaceId
+      slug: $slug
+      title: $title
+      description: $description
+      body: $body
+      blastRadius: $blastRadius
+      kind: $kind
+      inheritsFromId: $inheritsFromId
+      triggerExpr: $triggerExpr
+      affectsSurfaces: $affectsSurfaces
+      pinned: $pinned
+      chapterNum: $chapterNum
+    }
+  )
+}
+
+# Update handbook doc
+mutation UpdateHandbookDoc(
+  $id: UUID!
+  $body: String!
+  $title: String
+  $description: String
+  $triggerExpr: String
+  $affectsSurfaces: String
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    handbookDoc(id: $id) @check(expr: "this != null", message: "Doc not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  handbookDoc_update(
+    id: $id
+    data: {
+      body: $body
+      title: $title
+      description: $description
+      triggerExpr: $triggerExpr
+      affectsSurfaces: $affectsSurfaces
+    }
+  )
+}
+
+# Create handbook version (for history)
+mutation CreateHandbookVersion($docId: UUID!, $body: String!) @auth(level: NO_ACCESS) {
+  handbookVersion_insert(
+    data: {
+      docId: $docId
+      body: $body
+      editedByUserId_expr: "auth.uid"
+    }
+  )
+}
+
+# ============================================================================
+# CAPTURED ITEMS
+# ============================================================================
+
+# Create captured item
+mutation CreateCapturedItem(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $meetingId: UUID
+  $tag: String!
+  $text: String!
+  $dueLabel: String
+) @auth(level: NO_ACCESS) {
+  capturedItem_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      meetingId: $meetingId
+      tag: $tag
+      text: $text
+      dueLabel: $dueLabel
+      capturedByUserId_expr: "auth.uid"
+    }
+  )
+}
+
+# Publish captured item
+mutation PublishCapturedItem($id: UUID!) @auth(level: NO_ACCESS) {
+  capturedItem_update(id: $id, data: { published: true })
+}
+
+# ============================================================================
+# ADMIN / SEED MUTATIONS (for seeding data with specific IDs)
+# These are marked NO_ACCESS - only work in emulator or with admin credentials
+# ============================================================================
+
+# Create workspace with specific ID
+mutation CreateWorkspaceWithId($id: UUID!, $name: String!, $slug: String!, $domain: String, $valueProp: String, $setupCompleted: Boolean) @auth(level: USER) {
+  workspace_insert(data: { id: $id, name: $name, slug: $slug, domain: $domain, valueProp: $valueProp, setupCompleted: $setupCompleted })
+}
+
+# Create a join request for a workspace
+mutation CreateJoinRequest($workspaceId: UUID!, $userId: String!, $userEmail: String!) @auth(level: USER) {
+  # Self-own: userId is forced to the caller's uid ($userId is ignored), so a caller can only
+  # request to join on their own behalf. Pre-membership by design — no workspace @check.
+  workspaceJoinRequest_insert(
+    data: {
+      workspaceId: $workspaceId
+      userId_expr: "auth.uid"
+      userEmail: $userEmail
+    }
+  )
+}
+
+# Approve a join request (adds user to workspace)
+mutation ApproveJoinRequest($requestId: UUID!, $reviewedByUserId: String!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    workspaceJoinRequest(id: $requestId) @check(expr: "this != null", message: "Join request not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  workspaceJoinRequest_update(
+    id: $requestId
+    data: {
+      status: approved
+      reviewedAt_expr: "request.time"
+      reviewedByUserId: $reviewedByUserId
+    }
+  )
+}
+
+# Reject a join request
+mutation RejectJoinRequest($requestId: UUID!, $reviewedByUserId: String!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    workspaceJoinRequest(id: $requestId) @check(expr: "this != null", message: "Join request not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  workspaceJoinRequest_update(
+    id: $requestId
+    data: {
+      status: rejected
+      reviewedAt_expr: "request.time"
+      reviewedByUserId: $reviewedByUserId
+    }
+  )
+}
+
+# Create user with specific ID
+mutation CreateUserWithId($id: String!, $email: String!, $displayName: String) @auth(level: USER_ANON) {
+  # Self-own: the row id is forced to the caller's uid ($id is ignored), so a caller can only ever
+  # create their own User record. USER_ANON so anonymous (demo) users can self-create. The backend
+  # admin surface creates it impersonated — User.id defaults to auth.uid, so the insert always needs
+  # an auth.uid context (it can't run as a pure-admin NO_ACCESS op).
+  user_insert(data: { id_expr: "auth.uid", email: $email, displayName: $displayName })
+}
+
+# Create customer with specific ID
+mutation CreateCustomerWithId(
+  $id: UUID!
+  $workspaceId: UUID!
+  $name: String!
+  $slug: String!
+  $domain: String
+  $oneLiner: String
+  $tier: String
+  $arrCents: Int64
+  $lifecycle: CustomerLifecycle
+  $daysToRenewal: Int
+  $onboardingDayCurrent: Int
+  $onboardingDayTotal: Int
+  $renewalReadiness: RenewalReadiness
+) @auth(level: NO_ACCESS) {
+  customer_insert(
+    data: {
+      id: $id
+      workspaceId: $workspaceId
+      name: $name
+      slug: $slug
+      domain: $domain
+      oneLiner: $oneLiner
+      tier: $tier
+      arrCents: $arrCents
+      lifecycle: $lifecycle
+      daysToRenewal: $daysToRenewal
+      onboardingDayCurrent: $onboardingDayCurrent
+      onboardingDayTotal: $onboardingDayTotal
+      renewalReadiness: $renewalReadiness
+    }
+  )
+}
+
+# Create need with specific ID
+mutation CreateNeedWithId(
+  $id: UUID!
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $type: NeedType!
+  $headline: String!
+  $lede: String
+  $priorityRank: Int!
+  $agentReasoning: String
+  $handbookVersionId: UUID
+  $agentRunId: UUID
+  $sourceEventId: String
+  $threadId: UUID
+) @auth(level: NO_ACCESS) {
+  need_insert(
+    data: {
+      id: $id
+      workspaceId: $workspaceId
+      customerId: $customerId
+      type: $type
+      headline: $headline
+      lede: $lede
+      priorityRank: $priorityRank
+      agentReasoning: $agentReasoning
+      handbookVersionId: $handbookVersionId
+      agentRunId: $agentRunId
+      sourceEventId: $sourceEventId
+      threadId: $threadId
+    }
+  )
+}
+
+# Create AI plan - handbookVersionId is optional (nullable FK)
+mutation CreateAiPlan(
+  $workspaceId: UUID!
+  $customerId: UUID
+  $briefId: UUID
+  $archetypeName: String
+  $milestoneCount: Int
+  $durationLabel: String
+  $rationale: String
+  $headline: String
+  $milestones: String
+  $model: String!
+  $promptVersion: String!
+  $inputsHash: String
+  $handbookVersionId: UUID
+) @auth(level: NO_ACCESS) {
+  aiPlan_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      briefId: $briefId
+      archetypeName: $archetypeName
+      milestoneCount: $milestoneCount
+      durationLabel: $durationLabel
+      rationale: $rationale
+      headline: $headline
+      milestones: $milestones
+      model: $model
+      promptVersion: $promptVersion
+      inputsHash: $inputsHash
+      handbookVersionId: $handbookVersionId
+    }
+  )
+}
+
+# Create signal (for seeding)
+mutation CreateSignal(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $kind: SignalKind!
+  $state: SignalState!
+  $sentence: String
+  $evidenceText: String
+  $model: String!
+  $promptVersion: String!
+  $inputsHash: String!
+  $handbookVersionId: UUID!
+) @auth(level: NO_ACCESS) {
+  signal_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      kind: $kind
+      state: $state
+      sentence: $sentence
+      evidenceText: $evidenceText
+      model: $model
+      promptVersion: $promptVersion
+      inputsHash: $inputsHash
+      handbookVersionId: $handbookVersionId
+    }
+  )
+}
+
+# Create signal with specific ID (for signal classification service)
+mutation CreateSignalWithId(
+  $id: UUID!
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $kind: SignalKind!
+  $state: SignalState!
+  $sentence: String
+  $evidenceText: String
+  $model: String!
+  $promptVersion: String!
+  $inputsHash: String!
+  $handbookVersionId: UUID!
+) @auth(level: NO_ACCESS) {
+  signal_insert(
+    data: {
+      id: $id
+      workspaceId: $workspaceId
+      customerId: $customerId
+      kind: $kind
+      state: $state
+      sentence: $sentence
+      evidenceText: $evidenceText
+      model: $model
+      promptVersion: $promptVersion
+      inputsHash: $inputsHash
+      handbookVersionId: $handbookVersionId
+    }
+  )
+}
+
+# Create handbook doc with ID
+mutation CreateHandbookDocWithId(
+  $id: UUID!
+  $workspaceId: UUID!
+  $slug: String!
+  $title: String!
+  $description: String
+  $body: String!
+  $blastRadius: BlastRadius
+  $kind: HandbookDocKind
+  $inheritsFromId: UUID
+  $triggerExpr: String
+  $affectsSurfaces: String
+  $pinned: Boolean
+  $chapterNum: Int
+) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  handbookDoc_insert(
+    data: {
+      id: $id
+      workspaceId: $workspaceId
+      slug: $slug
+      title: $title
+      description: $description
+      body: $body
+      blastRadius: $blastRadius
+      kind: $kind
+      inheritsFromId: $inheritsFromId
+      triggerExpr: $triggerExpr
+      affectsSurfaces: $affectsSurfaces
+      pinned: $pinned
+      chapterNum: $chapterNum
+    }
+  )
+}
+
+# Create handbook version with ID
+mutation CreateHandbookVersionWithId(
+  $id: UUID!
+  $docId: UUID!
+  $body: String!
+) @auth(level: NO_ACCESS) {
+  handbookVersion_insert(
+    data: {
+      id: $id
+      docId: $docId
+      body: $body
+    }
+  )
+}
+
+# Create stakeholder (for seeding - no auth)
+mutation CreateStakeholderPublic(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $name: String!
+  $email: String
+  $role: String
+) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts insert if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  stakeholder_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      name: $name
+      email: $email
+      role: $role
+    }
+  )
+}
+
+# Auto-create a stakeholder from the inbound resolution cascade (caller controls id).
+# Idempotency is provided by the caller: the email→stakeholder match runs first, so
+# this only fires when no stakeholder for that email exists yet.
+mutation CreateStakeholderIfNotExists(
+  $id: UUID!
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $name: String!
+  $email: String
+  $role: String
+  $sentimentNote: String
+  $status: StakeholderStatus
+) @auth(level: NO_ACCESS) {
+  stakeholder_insert(
+    data: {
+      id: $id
+      workspaceId: $workspaceId
+      customerId: $customerId
+      name: $name
+      email: $email
+      role: $role
+      sentimentNote: $sentimentNote
+      status: $status
+    }
+  )
+}
+
+# Bump a stakeholder's last-interaction timestamp (single-field update so it never
+# nulls other columns). Used by the inbound write path to maintain lastInteractionAt.
+mutation TouchStakeholderLastInteraction($id: UUID!, $lastInteractionAt: Timestamp!) @auth(level: NO_ACCESS) {
+  stakeholder_update(id: $id, data: { lastInteractionAt: $lastInteractionAt })
+}
+
+# Set a stakeholder's structured importance tier (single-field update).
+mutation SetStakeholderImportance($id: UUID!, $importance: StakeholderImportance!) @auth(level: NO_ACCESS) {
+  stakeholder_update(id: $id, data: { importance: $importance })
+}
+
+# Create milestone (for seeding - no auth)
+mutation CreateMilestonePublic(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $title: String!
+  $ownerSide: OwnerSide
+  $targetDate: Date
+  $status: MilestoneStatus
+  $sortOrder: Int
+  $goalId: UUID
+  $goalRationale: String
+) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts insert if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  milestone_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      title: $title
+      ownerSide: $ownerSide
+      targetDate: $targetDate
+      status: $status
+      sortOrder: $sortOrder
+      goalId: $goalId
+      goalRationale: $goalRationale
+    }
+  )
+}
+
+# Create goal (for seeding - no auth)
+mutation CreateGoalPublic(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $text: String!
+  $status: GoalStatus
+  $sortOrder: Int
+  $isPrimary: Boolean
+) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId. Redacted from the response;
+  # @check aborts the whole transaction (no insert) if no membership row matches auth.uid.
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  goal_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      text: $text
+      status: $status
+      sortOrder: $sortOrder
+      isPrimary: $isPrimary
+    }
+  )
+}
+
+# ============================================================================
+# PLAYBOOKS
+# ============================================================================
+
+# Create playbook
+mutation CreatePlaybook(
+  $workspaceId: UUID!
+  $name: String!
+  $archetype: String
+  $fitNote: String
+  $scenario: PlaybookScenario
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  playbook_insert(
+    data: {
+      workspaceId: $workspaceId
+      name: $name
+      archetype: $archetype
+      fitNote: $fitNote
+      scenario: $scenario
+    }
+  )
+}
+
+# Update playbook
+mutation UpdatePlaybook(
+  $id: UUID!
+  $name: String
+  $archetype: String
+  $fitNote: String
+  $scenario: PlaybookScenario
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    playbook(id: $id) @check(expr: "this != null", message: "Playbook not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  playbook_update(
+    id: $id
+    data: {
+      name: $name
+      archetype: $archetype
+      fitNote: $fitNote
+      scenario: $scenario
+    }
+  )
+}
+
+# Delete playbook
+mutation DeletePlaybook($id: UUID!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    playbook(id: $id) @check(expr: "this != null", message: "Playbook not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  playbook_delete(id: $id)
+}
+
+# Create playbook milestone
+mutation CreatePlaybookMilestone(
+  $playbookId: UUID!
+  $title: String!
+  $ownerSide: OwnerSide
+  $durationDays: Int
+  $description: String
+  $sortOrder: Int
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    playbook(id: $playbookId) @check(expr: "this != null", message: "Playbook not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  playbookMilestone_insert(
+    data: {
+      playbookId: $playbookId
+      title: $title
+      ownerSide: $ownerSide
+      durationDays: $durationDays
+      description: $description
+      sortOrder: $sortOrder
+    }
+  )
+}
+
+# Update playbook milestone
+mutation UpdatePlaybookMilestone(
+  $id: UUID!
+  $title: String
+  $ownerSide: OwnerSide
+  $durationDays: Int
+  $description: String
+  $sortOrder: Int
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    playbookMilestone(id: $id) @check(expr: "this != null", message: "Milestone not found") {
+      playbook {
+        workspace {
+          workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+            @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+        }
+      }
+    }
+  }
+  playbookMilestone_update(
+    id: $id
+    data: {
+      title: $title
+      ownerSide: $ownerSide
+      durationDays: $durationDays
+      description: $description
+      sortOrder: $sortOrder
+    }
+  )
+}
+
+# Delete playbook milestone
+mutation DeletePlaybookMilestone($id: UUID!) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    playbookMilestone(id: $id) @check(expr: "this != null", message: "Milestone not found") {
+      playbook {
+        workspace {
+          workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+            @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+        }
+      }
+    }
+  }
+  playbookMilestone_delete(id: $id)
+}
+
+# Create playbook with specific ID (for seeding)
+mutation CreatePlaybookWithId(
+  $id: UUID!
+  $workspaceId: UUID!
+  $name: String!
+  $archetype: String
+  $fitNote: String
+  $scenario: PlaybookScenario
+) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  playbook_insert(
+    data: {
+      id: $id
+      workspaceId: $workspaceId
+      name: $name
+      archetype: $archetype
+      fitNote: $fitNote
+      scenario: $scenario
+    }
+  )
+}
+
+# Create playbook milestone with specific ID (for seeding)
+mutation CreatePlaybookMilestoneWithId(
+  $id: UUID!
+  $playbookId: UUID!
+  $title: String!
+  $ownerSide: OwnerSide
+  $durationDays: Int
+  $description: String
+  $sortOrder: Int
+) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must belong to the playbook's workspace (derived from $playbookId; aborts if not).
+  query @redact {
+    playbook(id: $playbookId) @check(expr: "this != null", message: "Playbook not found") {
+      workspace {
+        workspaceMembers_on_workspace(
+          where: { userId: { eq_expr: "auth.uid" } }
+          limit: 1
+        ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+          role
+        }
+      }
+    }
+  }
+  playbookMilestone_insert(
+    data: {
+      id: $id
+      playbookId: $playbookId
+      title: $title
+      ownerSide: $ownerSide
+      durationDays: $durationDays
+      description: $description
+      sortOrder: $sortOrder
+    }
+  )
+}
+
+# Update playbook learning metrics (after plan acceptance/rejection)
+mutation UpdatePlaybookLearning(
+  $id: UUID!
+  $timesUsed: Int
+  $timesAccepted: Int
+  $timesEdited: Int
+  $timesRejected: Int
+  $lastUsedAt: Timestamp
+) @auth(level: NO_ACCESS) {
+  playbook_update(
+    id: $id
+    data: {
+      timesUsed: $timesUsed
+      timesAccepted: $timesAccepted
+      timesEdited: $timesEdited
+      timesRejected: $timesRejected
+      lastUsedAt: $lastUsedAt
+    }
+  )
+}
+
+# NOTE: Increment operations must be done in application code:
+# 1. Fetch current values with GetPlaybooksPublic
+# 2. Increment in Python/TypeScript
+# 3. Call UpdatePlaybookLearning with new values
+
+# Track a playbook edit (for learning patterns)
+mutation CreatePlaybookEdit(
+  $playbookId: UUID!
+  $workspaceId: UUID!
+  $editType: PlaybookEditType!
+  $milestoneName: String
+  $originalValue: String
+  $newValue: String
+  $editedByUserId: String
+) @auth(level: NO_ACCESS) {
+  playbookEdit_insert(
+    data: {
+      playbookId: $playbookId
+      workspaceId: $workspaceId
+      editType: $editType
+      milestoneName: $milestoneName
+      originalValue: $originalValue
+      newValue: $newValue
+      editedByUserId: $editedByUserId
+    }
+  )
+}
+
+# ============================================================================
+# PLAYBOOK CATALOG (Global Templates & Blocks)
+# ============================================================================
+
+# Create milestone block (for catalog seeding)
+mutation CreateMilestoneBlock(
+  $id: UUID!
+  $slug: String!
+  $name: String!
+  $description: String
+  $ownerSide: OwnerSide!
+  $typicalDays: Int!
+  $minDays: Int
+  $maxDays: Int
+  $category: BlockCategory!
+  $prerequisites: String
+  $tags: String
+  $sortOrder: Int
+) @auth(level: NO_ACCESS) {
+  milestoneBlock_insert(
+    data: {
+      id: $id
+      slug: $slug
+      name: $name
+      description: $description
+      ownerSide: $ownerSide
+      typicalDays: $typicalDays
+      minDays: $minDays
+      maxDays: $maxDays
+      category: $category
+      prerequisites: $prerequisites
+      tags: $tags
+      sortOrder: $sortOrder
+    }
+  )
+}
+
+# Create playbook template (for catalog seeding)
+mutation CreatePlaybookTemplate(
+  $id: UUID!
+  $slug: String!
+  $name: String!
+  $description: String
+  $complexity: PlaybookComplexity!
+  $estimatedDays: Int!
+  $fitCriteria: String
+  $sortOrder: Int
+) @auth(level: NO_ACCESS) {
+  playbookTemplate_insert(
+    data: {
+      id: $id
+      slug: $slug
+      name: $name
+      description: $description
+      complexity: $complexity
+      estimatedDays: $estimatedDays
+      fitCriteria: $fitCriteria
+      sortOrder: $sortOrder
+    }
+  )
+}
+
+# Link a block to a template
+mutation CreatePlaybookTemplateBlock(
+  $templateId: UUID!
+  $blockId: UUID!
+  $sortOrder: Int!
+  $durationOverride: Int
+  $isRequired: Boolean!
+) @auth(level: NO_ACCESS) {
+  playbookTemplateBlock_insert(
+    data: {
+      templateId: $templateId
+      blockId: $blockId
+      sortOrder: $sortOrder
+      durationOverride: $durationOverride
+      isRequired: $isRequired
+    }
+  )
+}
+
+# Adopt a template to workspace (creates a workspace playbook from template)
+mutation AdoptPlaybookTemplate(
+  $workspaceId: UUID!
+  $name: String!
+  $archetype: String
+  $fitNote: String
+  $adoptedFromTemplateId: UUID!
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts write if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  playbook_insert(
+    data: {
+      workspaceId: $workspaceId
+      name: $name
+      archetype: $archetype
+      fitNote: $fitNote
+      adoptedFromTemplateId: $adoptedFromTemplateId
+    }
+  )
+}
+
+# Create playbook milestone with source block reference
+mutation CreatePlaybookMilestoneFromBlock(
+  $playbookId: UUID!
+  $title: String!
+  $ownerSide: OwnerSide!
+  $durationDays: Int!
+  $description: String
+  $sortOrder: Int!
+  $sourceBlockId: UUID
+) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must belong to the playbook's workspace (derived from $playbookId; aborts if not).
+  query @redact {
+    playbook(id: $playbookId) @check(expr: "this != null", message: "Playbook not found") {
+      workspace {
+        workspaceMembers_on_workspace(
+          where: { userId: { eq_expr: "auth.uid" } }
+          limit: 1
+        ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+          role
+        }
+      }
+    }
+  }
+  playbookMilestone_insert(
+    data: {
+      playbookId: $playbookId
+      title: $title
+      ownerSide: $ownerSide
+      durationDays: $durationDays
+      description: $description
+      sortOrder: $sortOrder
+      sourceBlockId: $sourceBlockId
+    }
+  )
+}
+
+# ============================================================================
+# WORKSPACE INTEGRATIONS
+# ============================================================================
+
+# Create or update workspace integration (upsert)
+# Note: connectedByUserId is passed explicitly for backend operations
+mutation UpsertWorkspaceIntegration(
+  $workspaceId: UUID!
+  $integrationType: IntegrationType!
+  $accessToken: String
+  $refreshToken: String
+  $tokenExpiresAt: Timestamp
+  $config: String
+  $slackTeamId: String
+  $status: IntegrationStatus!
+  $connectedByUserId: String
+) @auth(level: NO_ACCESS) {
+  workspaceIntegration_upsert(
+    data: {
+      workspaceId: $workspaceId
+      integrationType: $integrationType
+      accessToken: $accessToken
+      refreshToken: $refreshToken
+      tokenExpiresAt: $tokenExpiresAt
+      config: $config
+      slackTeamId: $slackTeamId
+      status: $status
+      connectedByUserId: $connectedByUserId
+    }
+  )
+}
+
+# Update integration status
+mutation UpdateIntegrationStatus(
+  $workspaceId: UUID!
+  $integrationType: IntegrationType!
+  $status: IntegrationStatus!
+  $lastError: String
+  $errorCount: Int
+) @auth(level: NO_ACCESS) {
+  workspaceIntegration_upsert(
+    data: {
+      workspaceId: $workspaceId
+      integrationType: $integrationType
+      status: $status
+      lastError: $lastError
+      errorCount: $errorCount
+    }
+  )
+}
+
+# Update integration tokens (after refresh)
+mutation UpdateIntegrationTokens(
+  $workspaceId: UUID!
+  $integrationType: IntegrationType!
+  $accessToken: String!
+  $refreshToken: String
+  $tokenExpiresAt: Timestamp
+) @auth(level: NO_ACCESS) {
+  workspaceIntegration_upsert(
+    data: {
+      workspaceId: $workspaceId
+      integrationType: $integrationType
+      accessToken: $accessToken
+      refreshToken: $refreshToken
+      tokenExpiresAt: $tokenExpiresAt
+    }
+  )
+}
+
+# Record successful sync
+mutation RecordIntegrationSync(
+  $workspaceId: UUID!
+  $integrationType: IntegrationType!
+) @auth(level: NO_ACCESS) {
+  workspaceIntegration_upsert(
+    data: {
+      workspaceId: $workspaceId
+      integrationType: $integrationType
+      lastSyncAt_expr: "request.time"
+      lastError: null
+      errorCount: 0
+    }
+  )
+}
+
+# Revoke integration
+mutation RevokeIntegration(
+  $workspaceId: UUID!
+  $integrationType: IntegrationType!
+) @auth(level: NO_ACCESS) {
+  workspaceIntegration_upsert(
+    data: {
+      workspaceId: $workspaceId
+      integrationType: $integrationType
+      status: revoked
+      accessToken: null
+      refreshToken: null
+    }
+  )
+}
+
+# ============================================================================
+# OAUTH STATE MANAGEMENT
+# ============================================================================
+
+# Create OAuth state for CSRF protection
+mutation CreateOAuthState(
+  $state: String!
+  $workspaceId: UUID!
+  $integrationType: IntegrationType!
+  $userId: String!
+  $redirectUri: String!
+  $codeVerifier: String
+  $expiresAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  oAuthState_insert(
+    data: {
+      state: $state
+      workspaceId: $workspaceId
+      integrationType: $integrationType
+      userId: $userId
+      redirectUri: $redirectUri
+      codeVerifier: $codeVerifier
+      expiresAt: $expiresAt
+      consumed: false
+    }
+  )
+}
+
+# Mark OAuth state as consumed (atomic update)
+mutation ConsumeOAuthState($state: String!) @auth(level: NO_ACCESS) {
+  oAuthState_updateMany(
+    where: { state: { eq: $state }, consumed: { eq: false } }
+    data: { consumed: true }
+  )
+}
+
+# Delete expired OAuth states (cleanup)
+mutation DeleteExpiredOAuthStates($now: Timestamp!) @auth(level: NO_ACCESS) {
+  oAuthState_deleteMany(
+    where: {
+      _or: [
+        { expiresAt: { lt: $now } }
+        { consumed: { eq: true } }
+      ]
+    }
+  )
+}
+
+# ============================================================================
+# CHANGE EVENTS (SignalWatcher Ingestion)
+# ============================================================================
+
+# Create a change event (for webhook ingestion)
+mutation CreateChangeEvent(
+  $workspaceId: UUID!
+  $customerId: UUID
+  $source: ChangeEventSource!
+  $sourceEventType: String!
+  $sourceRecordId: String
+  $fingerprint: String!
+  $rawPayload: String!
+  $occurredAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  changeEvent_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      source: $source
+      sourceEventType: $sourceEventType
+      sourceRecordId: $sourceRecordId
+      fingerprint: $fingerprint
+      rawPayload: $rawPayload
+      occurredAt: $occurredAt
+      processed: false
+    }
+  )
+}
+
+# Mark change event as processed
+mutation MarkChangeEventProcessed(
+  $id: UUID!
+  $eventClass: ChangeEventClass
+  $artifactsCreated: String
+  $processingError: String
+) @auth(level: NO_ACCESS) {
+  changeEvent_update(
+    id: $id
+    data: {
+      processed: true
+      processedAt_expr: "request.time"
+      eventClass: $eventClass
+      artifactsCreated: $artifactsCreated
+      processingError: $processingError
+    }
+  )
+}
+
+# Claim a change event for processing (atomic - only if not already processed)
+mutation ClaimChangeEvent(
+  $id: UUID!
+  $workspaceId: UUID!
+) @auth(level: NO_ACCESS) {
+  changeEvent_update(
+    id: $id
+    data: {
+      processed: true
+      processedAt_expr: "request.time"
+    }
+  )
+}
+
+# ============================================================================
+# SIDEKICK ITEMS (AI Assistant UI)
+# ============================================================================
+
+# Create a sidekick item (for agent/HITL UI)
+mutation CreateSidekickItem(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $type: SidekickItemType!
+  $question: String
+  $why: String
+  $isBlocking: Boolean
+  $text: String
+  $task: String
+  $step: String
+  $stepNum: Int
+  $totalSteps: Int
+  $agentRunId: UUID
+  $needId: UUID
+  $resolution: String
+  $resolvedByUserId: String
+  $resolvedAt: Timestamp
+  $timestampLabel: String
+) @auth(level: NO_ACCESS) {
+  sidekickItem_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      type: $type
+      question: $question
+      why: $why
+      isBlocking: $isBlocking
+      text: $text
+      task: $task
+      step: $step
+      stepNum: $stepNum
+      totalSteps: $totalSteps
+      agentRunId: $agentRunId
+      needId: $needId
+      resolution: $resolution
+      resolvedByUserId: $resolvedByUserId
+      resolvedAt: $resolvedAt
+      timestampLabel: $timestampLabel
+    }
+  )
+}
+
+# Resolve a sidekick item
+mutation ResolveSidekickItem(
+  $id: UUID!
+  $resolution: String!
+  $resolvedByUserId: String!
+) @auth(level: NO_ACCESS) {
+  sidekickItem_update(
+    id: $id
+    data: {
+      resolution: $resolution
+      resolvedByUserId: $resolvedByUserId
+      resolvedAt_expr: "request.time"
+    }
+  )
+}
+
+# Delete a sidekick item
+mutation DeleteSidekickItem($id: UUID!) @auth(level: NO_ACCESS) {
+  sidekickItem_delete(id: $id)
+}
+
+# Update sidekick item progress (for working items)
+mutation UpdateSidekickItemProgress(
+  $id: UUID!
+  $step: String!
+  $stepNum: Int!
+) @auth(level: NO_ACCESS) {
+  sidekickItem_update(
+    id: $id
+    data: {
+      step: $step
+      stepNum: $stepNum
+      updatedAt_expr: "request.time"
+    }
+  )
+}
+
+# Batch resolve sidekick items by setting resolution (keeps original type, just marks resolved)
+mutation BatchResolveSidekickItem(
+  $id: UUID!
+  $resolution: String!
+  $resolvedByUserId: String!
+) @auth(level: NO_ACCESS) {
+  sidekickItem_update(
+    id: $id
+    data: {
+      resolution: $resolution
+      resolvedByUserId: $resolvedByUserId
+      resolvedAt_expr: "request.time"
+    }
+  )
+}
+
+# ============================================================================
+# AGENT RUN ANSWERS (HITL)
+# ============================================================================
+
+# Create an answer for an agent run question
+mutation CreateAgentRunAnswer(
+  $agentRunId: UUID!
+  $questionId: String!
+  $answerText: String!
+  $answeredByUserId: String
+) @auth(level: NO_ACCESS) {
+  agentRunAnswer_insert(
+    data: {
+      agentRunId: $agentRunId
+      questionId: $questionId
+      answerText: $answerText
+      answeredByUserId: $answeredByUserId
+    }
+  )
+}
+
+# ============================================================================
+# SIGNAL FINGERPRINTS (Deduplication)
+# ============================================================================
+
+# Upsert a signal fingerprint (for dedup checking)
+mutation UpsertSignalFingerprint(
+  $workspaceId: UUID!
+  $fingerprint: String!
+) @auth(level: NO_ACCESS) {
+  signalFingerprint_upsert(
+    data: {
+      workspaceId: $workspaceId
+      fingerprint: $fingerprint
+    }
+  )
+}
+
+# ============================================================================
+# WAITLIST
+# ============================================================================
+
+# Add email to waitlist
+mutation CreateWaitlistSignup(
+  $email: String!
+  $source: String
+) @auth(level: NO_ACCESS) {
+  waitlistSignup_insert(
+    data: {
+      email: $email
+      source: $source
+    }
+  )
+}
+
+# ============================================================================
+# CUSTOMER HEALTH TRACKING
+# ============================================================================
+
+# Update customer health (for agents)
+mutation UpdateCustomerHealth(
+  $customerId: UUID!
+  $relationshipHealth: RelationshipHealth!
+  $relationshipHealthScore: Int!
+  $relationshipHealthReason: String
+  $relationshipHealthUpdatedBy: String!
+) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must belong to the customer's workspace (derived from $customerId; aborts if not).
+  query @redact {
+    customer(id: $customerId) @check(expr: "this != null", message: "Customer not found") {
+      workspace {
+        workspaceMembers_on_workspace(
+          where: { userId: { eq_expr: "auth.uid" } }
+          limit: 1
+        ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+          role
+        }
+      }
+    }
+  }
+  customer_update(
+    id: $customerId
+    data: {
+      relationshipHealth: $relationshipHealth
+      relationshipHealthScore: $relationshipHealthScore
+      relationshipHealthReason: $relationshipHealthReason
+      relationshipHealthUpdatedBy: $relationshipHealthUpdatedBy
+      relationshipHealthUpdatedAt_expr: "request.time"
+    }
+  )
+}
+
+# Update customer health with user auth (for manual overrides)
+mutation UpdateCustomerHealthUser(
+  $customerId: UUID!
+  $relationshipHealth: RelationshipHealth!
+  $relationshipHealthScore: Int!
+  $relationshipHealthReason: String!
+) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    customer(id: $customerId) @check(expr: "this != null", message: "Customer not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  customer_update(
+    id: $customerId
+    data: {
+      relationshipHealth: $relationshipHealth
+      relationshipHealthScore: $relationshipHealthScore
+      relationshipHealthReason: $relationshipHealthReason
+      relationshipHealthUpdatedBy_expr: "auth.uid"
+      relationshipHealthUpdatedAt_expr: "request.time"
+    }
+  )
+}
+
+# Set client signed date
+mutation SetClientSignedDate(
+  $customerId: UUID!
+  $clientSignedDate: Date!
+) @auth(level: NO_ACCESS) {
+  customer_update(
+    id: $customerId
+    data: { clientSignedDate: $clientSignedDate }
+  )
+}
+
+# ============================================================================
+# GOAL SOURCE ATTRIBUTION
+# ============================================================================
+
+# Create goal with source attribution (PUBLIC for both agents and users)
+mutation CreateGoalWithSource(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $text: String!
+  $source: String
+  $sourceType: GoalSourceType
+  $sourceInteractionId: UUID
+  $sourceThreadId: UUID
+  $sortOrder: Int
+  $isPrimary: Boolean
+) @auth(level: NO_ACCESS) {
+  goal_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      text: $text
+      source: $source
+      sourceType: $sourceType
+      sourceInteractionId: $sourceInteractionId
+      sourceThreadId: $sourceThreadId
+      sortOrder: $sortOrder
+      isPrimary: $isPrimary
+    }
+  )
+}
+
+# Update goal source attribution
+mutation UpdateGoalSource(
+  $goalId: UUID!
+  $source: String
+  $sourceType: GoalSourceType
+  $sourceInteractionId: UUID
+  $sourceThreadId: UUID
+) @auth(level: NO_ACCESS) {
+  goal_update(
+    id: $goalId
+    data: {
+      source: $source
+      sourceType: $sourceType
+      sourceInteractionId: $sourceInteractionId
+      sourceThreadId: $sourceThreadId
+    }
+  )
+}
+
+# ============================================================================
+# GOAL OBSERVATIONS
+# ============================================================================
+
+# Create goal observation
+mutation CreateGoalObservation(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $goalId: UUID!
+  $text: String!
+  $confidence: ConfidenceLevel!
+  $sourceType: String!
+  $sourceInteractionId: UUID
+  $fingerprint: String!
+) @auth(level: NO_ACCESS) {
+  goalObservation_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      goalId: $goalId
+      text: $text
+      confidence: $confidence
+      sourceType: $sourceType
+      sourceInteractionId: $sourceInteractionId
+      fingerprint: $fingerprint
+    }
+  )
+}
+
+# Update observation status
+mutation UpdateObservationStatus(
+  $observationId: UUID!
+  $status: ObservationStatus!
+) @auth(level: NO_ACCESS) {
+  goalObservation_update(
+    id: $observationId
+    data: { status: $status }
+  )
+}
+
+# Archive observations for a goal (bulk update)
+mutation ArchiveGoalObservations($goalId: UUID!) @auth(level: NO_ACCESS) {
+  goalObservation_updateMany(
+    where: { goalId: { eq: $goalId } }
+    data: { status: archived }
+  )
+}
+
+# Delete goal observation
+mutation DeleteGoalObservation($observationId: UUID!) @auth(level: NO_ACCESS) {
+  goalObservation_delete(id: $observationId)
+}
+
+# ============================================================================
+# HANDOFF BRIEFS
+# ============================================================================
+
+# Create a handoff brief for a customer
+mutation CreateHandoffBrief(
+  $workspaceId: UUID!
+  $customerId: UUID
+  $body: String
+  $dayCurrent: Int
+  $dayTotal: Int
+  $salesCommitments: String
+  $technicalContext: String
+  $realityCheckConfidence: String
+  $realityCheckRisks: String
+  $status: HandoffStatus!
+  $notionDealId: String
+  $notionDealUrl: String
+  $handbookVersionId: UUID!
+  $model: String
+  $promptVersion: String
+) @auth(level: NO_ACCESS) {
+  handoffBrief_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      body: $body
+      dayCurrent: $dayCurrent
+      dayTotal: $dayTotal
+      salesCommitments: $salesCommitments
+      technicalContext: $technicalContext
+      realityCheckConfidence: $realityCheckConfidence
+      realityCheckRisks: $realityCheckRisks
+      status: $status
+      notionDealId: $notionDealId
+      notionDealUrl: $notionDealUrl
+      handbookVersionId: $handbookVersionId
+      model: $model
+      promptVersion: $promptVersion
+    }
+  )
+}
+
+# Update an existing handoff brief
+mutation UpdateHandoffBrief(
+  $id: UUID!
+  $body: String
+  $dayCurrent: Int
+  $dayTotal: Int
+  $realityCheckConfidence: String
+  $status: HandoffStatus
+) @auth(level: NO_ACCESS) {
+  handoffBrief_update(
+    id: $id
+    data: {
+      body: $body
+      dayCurrent: $dayCurrent
+      dayTotal: $dayTotal
+      realityCheckConfidence: $realityCheckConfidence
+      status: $status
+    }
+  )
+}
+
+# ============================================================================
+# HANDOFF QUESTIONS (Side-asks and Kickoff items)
+# ============================================================================
+
+# Create a handoff question (side-ask or kickoff item)
+mutation CreateHandoffQuestion(
+  $id: UUID!
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $agentRunId: UUID
+  $question: String!
+  $field: String
+  $routing: String!
+  $questionType: String
+  $metadata: String
+  $proposedAnswer: String
+  $relatesTo: String
+  $status: String!
+) @auth(level: NO_ACCESS) {
+  handoffQuestion_insert(
+    data: {
+      id: $id
+      workspaceId: $workspaceId
+      customerId: $customerId
+      agentRunId: $agentRunId
+      question: $question
+      field: $field
+      routing: $routing
+      questionType: $questionType
+      metadata: $metadata
+      proposedAnswer: $proposedAnswer
+      relatesTo: $relatesTo
+      status: $status
+    }
+  )
+}
+
+# Answer a handoff question
+mutation AnswerHandoffQuestion(
+  $id: UUID!
+  $answerText: String!
+  $answeredById: String!
+) @auth(level: NO_ACCESS) {
+  handoffQuestion_update(
+    id: $id
+    data: {
+      answerText: $answerText
+      answeredById: $answeredById
+      answeredAt_expr: "request.time"
+      status: "answered"
+    }
+  )
+}
+
+# ============================================================================
+# ORCHESTRATOR — AgentTask work queue (net-new, side-by-side with handoff_auto)
+# ============================================================================
+
+mutation CreateAgentTask(
+  $workspaceId: UUID!
+  $customerId: UUID
+  $taskType: String!
+  $triggerType: String!
+  $payload: String!
+  $priority: Int!
+  $scheduledFor: Timestamp!
+) @auth(level: NO_ACCESS) {
+  agentTask_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      taskType: $taskType
+      triggerType: $triggerType
+      payload: $payload
+      status: pending
+      priority: $priority
+      scheduledFor: $scheduledFor
+    }
+  )
+}
+
+# Guarded optimistic claim — compare-and-swap. Returns count: 1 = claimed, 0 = lost
+# the race / already claimed / not yet due. Stands in for SELECT ... FOR UPDATE SKIP LOCKED.
+mutation ClaimAgentTask($id: UUID!, $now: Timestamp!) @auth(level: NO_ACCESS) {
+  agentTask_updateMany(
+    where: {
+      id: { eq: $id }
+      status: { eq: pending }
+      scheduledFor: { le: $now }
+    }
+    data: {
+      status: in_progress
+      claimedAt_expr: "request.time"
+    }
+  )
+}
+
+# Generic status transition (e.g. link the agent run; pause to waiting with a
+# blocking need; flip back to pending on HITL resume).
+mutation UpdateAgentTaskStatus(
+  $id: UUID!
+  $status: AgentTaskStatus!
+  $agentRunId: UUID
+  $blockingNeedId: UUID
+) @auth(level: NO_ACCESS) {
+  agentTask_update(
+    id: $id
+    data: {
+      status: $status
+      agentRunId: $agentRunId
+      blockingNeedId: $blockingNeedId
+    }
+  )
+}
+
+mutation EscalateAgentTaskPriority(
+  $id: UUID!
+  $priority: Int!
+) @auth(level: NO_ACCESS) {
+  agentTask_update(
+    id: $id
+    data: { priority: $priority, scheduledFor_expr: "request.time" }
+  )
+}
+
+# Reset all pending tasks to be immediately due (for pipeline test resets)
+mutation FastForwardPendingTasks($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  agentTask_updateMany(
+    where: {
+      workspaceId: { eq: $workspaceId }
+      status: { eq: pending }
+    }
+    data: { scheduledFor_expr: "request.time" }
+  )
+}
+
+mutation CompleteAgentTask(
+  $id: UUID!
+  $status: AgentTaskStatus!
+  $result: String
+  $errorMessage: String
+) @auth(level: NO_ACCESS) {
+  agentTask_update(
+    id: $id
+    data: {
+      status: $status
+      result: $result
+      errorMessage: $errorMessage
+      completedAt_expr: "request.time"
+    }
+  )
+}
+
+# ----------------------------------------------------------------------------
+# Demo reset — delete what a prior /demo-agent run created so re-runs don't dupe.
+# All scoped to a specific workspace + demo customer + demo markers; never touches
+# real data.
+# ----------------------------------------------------------------------------
+
+# Delete demo-lineage tasks for the customer: the seed triage ("demo") AND any
+# self-enqueued follow-ups it produced ("play"). Keeps re-runs from accumulating.
+mutation DeleteDemoAgentTasks($workspaceId: UUID!, $customerId: UUID!) @auth(level: NO_ACCESS) {
+  agentTask_deleteMany(
+    where: {
+      workspaceId: { eq: $workspaceId }
+      customerId: { eq: $customerId }
+      triggerType: { in: ["demo", "play"] }
+    }
+  )
+}
+
+# Delete the worker's observations/tips for the demo customer on reset.
+mutation DeleteDemoSidekickItems($workspaceId: UUID!, $customerId: UUID!) @auth(level: NO_ACCESS) {
+  sidekickItem_deleteMany(
+    where: {
+      workspaceId: { eq: $workspaceId }
+      customerId: { eq: $customerId }
+      type: { in: [observed, tip] }
+    }
+  )
+}
+
+mutation DeleteRiskPlayStepsForBriefs($briefIds: [UUID!]!) @auth(level: NO_ACCESS) {
+  riskPlayStep_deleteMany(where: { briefId: { in: $briefIds } })
+}
+
+mutation DeleteRiskBriefsForCustomer($workspaceId: UUID!, $customerId: UUID!) @auth(level: NO_ACCESS) {
+  riskBrief_deleteMany(
+    where: { workspaceId: { eq: $workspaceId }, customerId: { eq: $customerId } }
+  )
+}
+
+mutation DeleteNeedsBySourceEvent($workspaceId: UUID!, $sourceEventId: String!) @auth(level: NO_ACCESS) {
+  need_deleteMany(
+    where: { workspaceId: { eq: $workspaceId }, sourceEventId: { eq: $sourceEventId } }
+  )
+}
+
+mutation DeleteDemoSignals($workspaceId: UUID!, $customerId: UUID!, $inputsHash: String!) @auth(level: NO_ACCESS) {
+  signal_deleteMany(
+    where: {
+      workspaceId: { eq: $workspaceId }
+      customerId: { eq: $customerId }
+      inputsHash: { eq: $inputsHash }
+    }
+  )
+}
+
+# Seed the demo trigger event as a real Signal row (UI renders real data).
+mutation CreateDemoSignal(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $kind: SignalKind!
+  $state: SignalState!
+  $sentence: String!
+  $evidenceText: String!
+  $nextAction: String
+  $inputsHash: String!
+  $generatedAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  signal_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      kind: $kind
+      state: $state
+      sentence: $sentence
+      evidenceText: $evidenceText
+      nextAction: $nextAction
+      model: "demo-seed"
+      promptVersion: "demo-v1"
+      inputsHash: $inputsHash
+      handbookVersionId: "00000000-0000-0000-0000-000000000000"
+      generatedAt: $generatedAt
+    }
+  )
+}
+
+# Risk/Save play writes (Phase 1) — finally populate the dormant tables.
+mutation CreateRiskBrief(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $whatChanged: String!
+  $evidenceText: String
+  $play: String
+  $inputsHash: String!
+) @auth(level: NO_ACCESS) {
+  riskBrief_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      whatChanged: $whatChanged
+      evidenceText: $evidenceText
+      play: $play
+      model: "orchestrator-risk-save"
+      promptVersion: "risk-save-v1"
+      inputsHash: $inputsHash
+      handbookVersionId: "00000000-0000-0000-0000-000000000000"
+    }
+  )
+}
+
+mutation CreateRiskPlayStep(
+  $briefId: UUID!
+  $label: String!
+  $rationale: String
+  $sortOrder: Int!
+) @auth(level: NO_ACCESS) {
+  riskPlayStep_insert(
+    data: {
+      briefId: $briefId
+      label: $label
+      rationale: $rationale
+      sortOrder: $sortOrder
+    }
+  )
+}
+
+# CSM marks a save-play step complete (and/or attaches optional findings). Frontend-callable;
+# RBAC gate walks step -> brief -> customer -> workspace -> members.
+mutation UpdateRiskPlayStep($id: UUID!, $done: Boolean!, $notes: String) @auth(level: USER_ANON) @transaction {
+  query @redact {
+    riskPlayStep(id: $id) @check(expr: "this != null", message: "Step not found") {
+      brief {
+        customer {
+          workspace {
+            workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+              @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+          }
+        }
+      }
+    }
+  }
+  riskPlayStep_update(id: $id, data: { done: $done, notes: $notes })
+}
+
+# Create a workspace RISK playbook (scenario=risk). Steps are added as
+# PlaybookMilestones via the existing CreatePlaybookMilestone mutation
+# (title -> step label, description -> step rationale).
+mutation CreateRiskPlaybook($workspaceId: UUID!, $name: String!, $fitNote: String) @auth(level: NO_ACCESS) {
+  playbook_insert(
+    data: {
+      workspaceId: $workspaceId
+      name: $name
+      fitNote: $fitNote
+      scenario: risk
+    }
+  )
+}
+
+# Resume a HITL-paused task WITH the human's answers folded into the payload
+# (waiting -> pending, clears the block). The re-claimed run sees the answers.
+mutation ResumeAgentTaskWithAnswers($id: UUID!, $payload: String!) @auth(level: NO_ACCESS) {
+  agentTask_update(
+    id: $id
+    data: { status: pending, payload: $payload, blockingNeedId: null }
+  )
+}
+
+# Insert a CustomerStrategy with an explicit id. Used by the check-then-write path
+# (GetCustomerStrategy -> UpdateCustomerStrategy if it exists, else this insert), since
+# CustomerStrategy has no unique key on `customer` for a real upsert.
+mutation CreateCustomerStrategyWithId(
+  $id: UUID!
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $body: String!
+  $lastUpdatedBy: String
+) @auth(level: NO_ACCESS) {
+  customerStrategy_insert(
+    data: {
+      id: $id
+      workspaceId: $workspaceId
+      customerId: $customerId
+      body: $body
+      lastUpdatedBy: $lastUpdatedBy
+    }
+  )
+}
+
+# Demo meeting (tagged via externalEventId so the demo reset can find + delete it).
+mutation CreateDemoMeeting(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $title: String!
+  $scheduledAt: Timestamp!
+  $externalEventId: String!
+) @auth(level: NO_ACCESS) {
+  meeting_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      title: $title
+      type: "qbr"
+      scheduledAt: $scheduledAt
+      externalEventId: $externalEventId
+    }
+  )
+}
+
+mutation DeleteMeetingBriefsByMeetings($meetingIds: [UUID!]!) @auth(level: NO_ACCESS) {
+  meetingBrief_deleteMany(where: { meetingId: { in: $meetingIds } })
+}
+
+mutation DeleteMeetingsByIds($ids: [UUID!]!) @auth(level: NO_ACCESS) {
+  meeting_deleteMany(where: { id: { in: $ids } })
+}
+
+# ============================================================================
+# HUDDLES — internal discussion create/post/resolve (conversation interface)
+# ============================================================================
+
+mutation CreateHuddle(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $threadId: UUID!
+  $anchorInteractionId: UUID
+  $title: String
+  $createdByUserId: String
+) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must be a member of $workspaceId (redacted; aborts insert if not).
+  query @redact {
+    workspaceMembers(
+      where: { workspaceId: { eq: $workspaceId }, userId: { eq_expr: "auth.uid" } }
+      limit: 1
+    ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+      role
+    }
+  }
+  huddle_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      threadId: $threadId
+      anchorInteractionId: $anchorInteractionId
+      title: $title
+      createdByUserId: $createdByUserId
+      status: open
+    }
+  )
+}
+
+# Post a message into a huddle. authorKind "user" (authorUserId set) or "agent" (@sidekick).
+mutation PostHuddleMessage(
+  $huddleId: UUID!
+  $authorUserId: String
+  $authorKind: String!
+  $body: String!
+  $mentions: String
+) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must belong to the huddle's workspace (derived from $huddleId; aborts if not).
+  query @redact {
+    huddle(id: $huddleId) @check(expr: "this != null", message: "Huddle not found") {
+      workspace {
+        workspaceMembers_on_workspace(
+          where: { userId: { eq_expr: "auth.uid" } }
+          limit: 1
+        ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+          role
+        }
+      }
+    }
+  }
+  huddleMessage_insert(
+    data: {
+      huddleId: $huddleId
+      authorUserId: $authorUserId
+      authorKind: $authorKind
+      body: $body
+      mentions: $mentions
+    }
+  )
+}
+
+mutation ResolveHuddle($id: UUID!) @auth(level: USER_ANON) @transaction {
+  # RBAC gate: caller must belong to the huddle's workspace (derived from $id; aborts if not).
+  query @redact {
+    huddle(id: $id) @check(expr: "this != null", message: "Huddle not found") {
+      workspace {
+        workspaceMembers_on_workspace(
+          where: { userId: { eq_expr: "auth.uid" } }
+          limit: 1
+        ) @check(expr: "this.size() > 0", message: "Not a member of this workspace") {
+          role
+        }
+      }
+    }
+  }
+  huddle_update(id: $id, data: { status: resolved, resolvedAt_expr: "request.time" })
+}
+
+# Demo reset: remove DraftResponses the Support play hung off the demo event's Needs, scoped by
+# need ids (never touches real drafts). Run BEFORE deleting the Needs (FK). deleteMany filters
+# scalar columns only, so we filter the FK `surfacedInNeedId` (not a nested relation).
+mutation DeleteDraftsByNeeds($needIds: [UUID!]!) @auth(level: NO_ACCESS) {
+  draftResponse_deleteMany(where: { surfacedInNeedId: { in: $needIds } })
+}
+
+# Demo reset: delete Interactions seeded by demo events (has sourceEventId set).
+# Run BEFORE deleting Threads (FK: interaction.threadId → thread.id).
+mutation DeleteDemoInteractionsBySourceEvents($sourceEventIds: [String!]!) @auth(level: NO_ACCESS) {
+  interaction_deleteMany(where: { sourceEventId: { in: $sourceEventIds } })
+}
+
+# Demo reset: delete Threads seeded by demo events (externalThreadId matches demo event IDs).
+# Run AFTER deleting Interactions, BEFORE deleting Needs (thread.needId → need.id FK).
+mutation DeleteDemoThreadsByExternalIds($externalThreadIds: [String!]!) @auth(level: NO_ACCESS) {
+  thread_deleteMany(where: { externalThreadId: { in: $externalThreadIds } })
+}
+
+# ── Pipeline test reset ────────────────────────────────────────────────────────
+# Supersede all sweep-generated signals so the detector sees them as fresh on
+# the next run. model='sweep' is the marker written by SignalSweepService.
+mutation SupersedeSweepSignals($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  signal_updateMany(
+    where: {
+      workspaceId: { eq: $workspaceId }
+      model: { eq: "sweep" }
+      supersededAt: { isNull: true }
+    }
+    data: { supersededAt_expr: "request.time" }
+  )
+}
+
+# Resolve open needs whose types the sweep generates, so FindOpenNeedByType
+# dedup check clears and fresh needs can be created on the next run.
+mutation ResolveSweepGeneratedNeeds($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  need_updateMany(
+    where: {
+      workspaceId: { eq: $workspaceId }
+      type: { in: [going_dark, frustrated_signal] }
+      resolvedAt: { isNull: true }
+    }
+    data: { resolvedAt_expr: "request.time", status: resolved }
+  )
+}
+
+# Pipeline test full-wipe mutations (workspace-level; dev/testing only)
+mutation DeleteRiskPlayStepsByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  riskPlayStep_deleteMany(
+    where: { brief: { workspace: { id: { eq: $workspaceId } } } }
+  )
+}
+
+mutation DeleteRiskBriefsByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  riskBrief_deleteMany(
+    where: { workspaceId: { eq: $workspaceId } }
+  )
+}
+
+mutation DeleteSidekickObservationsByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  sidekickItem_deleteMany(
+    where: {
+      workspaceId: { eq: $workspaceId }
+      type: { in: [observed, tip] }
+    }
+  )
+}
+
+mutation DeleteDraftResponsesByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  draftResponse_deleteMany(
+    where: { workspaceId: { eq: $workspaceId } }
+  )
+}
+
+mutation ResolveAllOpenNeeds($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  need_updateMany(
+    where: {
+      workspaceId: { eq: $workspaceId }
+      resolvedAt: { isNull: true }
+      type: { ne: sidekick_question }
+    }
+    data: { resolvedAt_expr: "request.time", status: resolved }
+  )
+}
+
+mutation SupersedeAllActiveSignals($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  signal_updateMany(
+    where: {
+      workspaceId: { eq: $workspaceId }
+      supersededAt: { isNull: true }
+    }
+    data: { supersededAt_expr: "request.time" }
+  )
+}
+
+# ── Pipeline test: clear the AgentTask queue (dev reset) ───────────────────────
+mutation DeleteAgentTasksByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  agentTask_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+# ── Demo seed reset: workspace-scoped child deletes (FK-safe; dev/demo only) ────
+# Used by backend/orchestrator/demo/reset.py to wipe a demo workspace before a
+# fresh seed. Customers + the existing *ByWorkspace deletes above cover the rest.
+mutation DeleteInteractionsByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  interaction_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+mutation DeleteThreadsByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  thread_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+mutation DeleteNeedsByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  need_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+mutation DeleteMeetingBriefsByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  meetingBrief_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+mutation DeleteMeetingsByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  meeting_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+mutation DeleteSignalsByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  signal_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+mutation DeleteMilestonesByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  milestone_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+mutation DeleteGoalsByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  goal_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+mutation DeleteStakeholdersByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  stakeholder_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+mutation DeleteAiPlansByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  aiPlan_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+mutation DeleteHandoffBriefsByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  handoffBrief_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+mutation DeletePlaybookMilestonesByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  playbookMilestone_deleteMany(
+    where: { playbook: { workspace: { id: { eq: $workspaceId } } } }
+  )
+}
+
+mutation DeletePlaybooksByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  playbook_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+mutation DeleteHandbookVersionsByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  handbookVersion_deleteMany(
+    where: { doc: { workspace: { id: { eq: $workspaceId } } } }
+  )
+}
+
+mutation DeleteHandbookDocsByWorkspace($workspaceId: UUID!) @auth(level: NO_ACCESS) {
+  handbookDoc_deleteMany(where: { workspaceId: { eq: $workspaceId } })
+}
+
+# ── Re-engagement: a fresh inbound message means the customer is no longer DARK.
+# Supersede absence signals (going_dark, cadence) and resolve open going_dark needs
+# for that customer. Other risk (sentiment, renewal) is untouched — a churning
+# customer still emails about simple things. ──────────────────────────────────
+mutation SupersedeAbsenceSignalsForCustomer($workspaceId: UUID!, $customerId: UUID!) @auth(level: NO_ACCESS) {
+  signal_updateMany(
+    where: {
+      workspaceId: { eq: $workspaceId }
+      customerId: { eq: $customerId }
+      kind: { in: [going_dark, cadence] }
+      supersededAt: { isNull: true }
+    }
+    data: { supersededAt_expr: "request.time" }
+  )
+}
+
+mutation ResolveGoingDarkNeedsForCustomer($workspaceId: UUID!, $customerId: UUID!) @auth(level: NO_ACCESS) {
+  need_updateMany(
+    where: {
+      workspaceId: { eq: $workspaceId }
+      customerId: { eq: $customerId }
+      type: { eq: going_dark }
+      resolvedAt: { isNull: true }
+    }
+    data: { resolvedAt_expr: "request.time", status: resolved }
+  )
+}
+
+# ============================================================================
+# RENEWALS — profile / plays / risk items + stakeholder & vector renewal fields
+# All PUBLIC: written by the seed today, orchestrator-ready for later.
+# ============================================================================
+
+mutation UpsertRenewalProfile(
+  $id: UUID!
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $posture: RenewalPosture!
+  $postureReason: String
+  $narrativeLede: String
+  $targetArrCents: Int64
+  $expansionPipeCents: Int64
+  $renewalType: String
+  $autoRenew: Boolean
+  $termNote: String
+  $lastPriceChangeNote: String
+  $postureSetBy: String
+) @auth(level: NO_ACCESS) {
+  renewalProfile_upsert(
+    data: {
+      id: $id
+      workspaceId: $workspaceId
+      customerId: $customerId
+      posture: $posture
+      postureReason: $postureReason
+      narrativeLede: $narrativeLede
+      targetArrCents: $targetArrCents
+      expansionPipeCents: $expansionPipeCents
+      renewalType: $renewalType
+      autoRenew: $autoRenew
+      termNote: $termNote
+      lastPriceChangeNote: $lastPriceChangeNote
+      postureSetBy: $postureSetBy
+      postureDerivedAt_expr: "request.time"
+    }
+  )
+}
+
+mutation DeleteRenewalProfile($id: UUID!) @auth(level: NO_ACCESS) {
+  renewalProfile_delete(id: $id)
+}
+
+mutation CreateRenewalPlay(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $profileId: UUID!
+  $kind: RenewalPlayKind!
+  $posture: RenewalPosture!
+  $title: String!
+  $description: String!
+  $basis: String
+  $valueAmountCents: Int64
+  $valueLabel: String
+  $isPrimary: Boolean!
+  $sortOrder: Int!
+) @auth(level: NO_ACCESS) {
+  renewalPlay_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      profileId: $profileId
+      kind: $kind
+      posture: $posture
+      title: $title
+      description: $description
+      basis: $basis
+      valueAmountCents: $valueAmountCents
+      valueLabel: $valueLabel
+      isPrimary: $isPrimary
+      sortOrder: $sortOrder
+    }
+  )
+}
+
+mutation DeleteRenewalPlaysForProfile($profileId: UUID!) @auth(level: NO_ACCESS) {
+  renewalPlay_deleteMany(where: { profileId: { eq: $profileId } })
+}
+
+mutation CreateRenewalRiskItem(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $profileId: UUID!
+  $title: String!
+  $description: String!
+  $severity: RiskLevel!
+  $mitigation: String
+  $sortOrder: Int!
+) @auth(level: NO_ACCESS) {
+  renewalRiskItem_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      profileId: $profileId
+      title: $title
+      description: $description
+      severity: $severity
+      mitigation: $mitigation
+      sortOrder: $sortOrder
+    }
+  )
+}
+
+mutation DeleteRenewalRiskItemsForProfile($profileId: UUID!) @auth(level: NO_ACCESS) {
+  renewalRiskItem_deleteMany(where: { profileId: { eq: $profileId } })
+}
+
+# Set renewal-specific fields on an existing stakeholder (PUBLIC, for the seed).
+mutation UpdateStakeholderRenewal(
+  $id: UUID!
+  $isChampion: Boolean
+  $renewalHealth: SignalState
+  $status: StakeholderStatus
+) @auth(level: NO_ACCESS) {
+  stakeholder_update(
+    id: $id
+    data: { isChampion: $isChampion, renewalHealth: $renewalHealth, status: $status }
+  )
+}
+
+# Set the baseline tick on a progress vector.
+mutation UpdateProgressVectorBaseline(
+  $id: UUID!
+  $baselineProgress: Float
+) @auth(level: NO_ACCESS) {
+  progressVector_update(id: $id, data: { baselineProgress: $baselineProgress })
+}
+
+# Set only the renewal date (daysToRenewal) on a customer — used by the
+# Renewals page inline editor. Minimal field set so it never nulls other columns.
+mutation SetCustomerRenewalDate($id: UUID!, $daysToRenewal: Int) @auth(level: USER) @transaction {
+  # RBAC gate: caller must belong to this record's workspace (aborts if not).
+  query @redact {
+    customer(id: $id) @check(expr: "this != null", message: "Customer not found") {
+      workspace {
+        workspaceMembers_on_workspace(where: { userId: { eq_expr: "auth.uid" } }, limit: 1)
+          @check(expr: "this.size() > 0", message: "Not a member of this workspace") { role }
+      }
+    }
+  }
+  customer_update(id: $id, data: { daysToRenewal: $daysToRenewal })
+}
+
+# ============================================================================
+# METRIC SNAPSHOTS (time-series substrate — see docs/plans/SIGNAL_AGGREGATION.md)
+# ============================================================================
+
+# Append one metric snapshot. Backend-only (all metric writes are server-side).
+# capturedAt / createdAt are server-defaulted (request.time) — never passed in.
+mutation CreateMetricSnapshot(
+  $workspaceId: UUID!
+  $customerId: UUID!
+  $stakeholderId: UUID
+  $metric: String!
+  $value: Float
+  $state: String
+  $prevValue: Float
+  $trigger: String!
+  $inputs: String!
+) @auth(level: NO_ACCESS) {
+  metricSnapshot_insert(
+    data: {
+      workspaceId: $workspaceId
+      customerId: $customerId
+      stakeholderId: $stakeholderId
+      metric: $metric
+      value: $value
+      state: $state
+      prevValue: $prevValue
+      trigger: $trigger
+      inputs: $inputs
+    }
+  )
+}
+
+# Delete one snapshot by id — used by the retention job to downsample old raw rows.
+mutation DeleteMetricSnapshot($id: UUID!) @auth(level: NO_ACCESS) {
+  metricSnapshot_delete(id: $id)
+}

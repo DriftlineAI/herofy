@@ -1,0 +1,30 @@
+{
+  "name": "herofy",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "shared"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "dev:frontend": "bash scripts/dev-frontend.sh",
+    "dev:backend": "bash scripts/dev-backend.sh",
+    "db:up": "docker-compose up -d db",
+    "db:down": "docker-compose down",
+    "db:migrate": "psql $DATABASE_URL -f db/migrations/001_initial_schema.sql",
+    "db:seed": "psql $DATABASE_URL -f db/seed.sql",
+    "db:reset": "npm run db:migrate && npm run db:seed"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "vite": "^6.2.3"
+  },
+  "dependencies": {
+    "@dataconnect/generated": "file:src/dataconnect-generated",
+    "firebase": "^12.13.0"
+  }
+}

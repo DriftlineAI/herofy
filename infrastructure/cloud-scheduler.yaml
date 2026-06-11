@@ -1,0 +1,99 @@
+# Google Cloud Scheduler Configuration
+# Scheduled background jobs for Herofy backend
+#
+# Deployment:
+#   gcloud scheduler jobs create http JOB_NAME \
+#     --location=us-central1 \
+#     --schedule="SCHEDULE" \
+#     --uri="URI" \
+#     --http-method=POST \
+#     --headers="Authorization=Bearer ${INTERNAL_API_KEY}" \
+#     --project=herofy-496505
+#
+# Or use the gcloud commands below to create each job
+
+---
+# Job 1: Renew watch channels for Gmail and Calendar
+# Runs weekly on Sunday to renew watch channels before 7-day expiration
+- name: renew-integration-watches
+  description: Renew Gmail and Calendar watch channels before expiration
+  schedule: "0 0 * * 0"  # Weekly on Sunday at midnight UTC
+  timezone: UTC
+  location: us-central1
+  http_target:
+    uri: https://api.herofy.ai/internal/renew-watches
+    http_method: POST
+    headers:
+      Authorization: Bearer ${INTERNAL_API_KEY}
+      Content-Type: application/json
+  retry_config:
+    retry_count: 3
+    max_retry_duration: 600s  # 10 minutes
+    min_backoff_duration: 5s
+    max_backoff_duration: 60s
+
+  # Creation command:
+  # gcloud scheduler jobs create http renew-integration-watches \
+  #   --location=us-central1 \
+  #   --schedule="0 0 * * 0" \
+  #   --time-zone=UTC \
+  #   --uri="https://api.herofy.ai/internal/renew-watches" \
+  #   --http-method=POST \
+  #   --headers="Authorization=Bearer ${INTERNAL_API_KEY},Content-Type=application/json" \
+  #   --max-retry-attempts=3 \
+  #   --max-retry-duration=600s \
+  #   --project=herofy-496505
+
+---
+# Job 2: Poll integrations for new data (fallback)
+# Runs every 15 minutes as fallback for push notifications
+- name: poll-integrations-fallback
+  description: Poll Gmail for new messages (fallback for push notifications)
+  schedule: "*/15 * * * *"  # Every 15 minutes
+  timezone: UTC
+  location: us-central1
+  http_target:
+    uri: https://api.herofy.ai/internal/poll-integrations
+    http_method: POST 
+    headers:
+      Authorization: Bearer ${INTERNAL_API_KEY}
+      Content-Type: application/json
+  retry_config:
+    retry_count: 2
+    max_retry_duration: 300s  # 5 minutes
+    min_backoff_duration: 5s
+    max_backoff_duration: 30s
+
+  # Creation command:
+  # gcloud scheduler jobs create http poll-integrations-fallback \
+  #   --location=us-central1 \
+  #   --schedule="*/15 * * * *" \
+  #   --time-zone=UTC \
+  #   --uri="https://api.herofy.ai/internal/poll-integrations" \
+  #   --http-method=POST \
+  #   --headers="Authorization=Bearer ${INTERNAL_API_KEY},Content-Type=application/json" \
+  #   --max-retry-attempts=2 \
+  #   --max-retry-duration=300s \
+  #   --project=herofy-496505
+
+---
+# Environment Variables Required:
+#
+# INTERNAL_API_KEY - Secret key for authenticating internal endpoints
+#   Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+#   Store in Google Secret Manager and reference in Cloud Run
+#
+# Configuration:
+#   1. Set INTERNAL_API_KEY in .env (local) or Secret Manager (production)
+#   2. Create Cloud Scheduler jobs using commands above
+#   3. Verify jobs are created:
+#      gcloud scheduler jobs list --location=us-central1 --project=herofy-496505
+#   4. Test jobs manually:
+#      gcloud scheduler jobs run JOB_NAME --location=us-central1 --project=herofy-496505
+#   5. View logs:
+#      gcloud scheduler jobs describe JOB_NAME --location=us-central1 --project=herofy-496505
+
+# Monitoring:
+#   - Check Cloud Scheduler logs in Cloud Console
+#   - Monitor backend logs for "renew_watches_" and "poll_integrations_" events
+#   - Set up alerts for job failures in Cloud Monitoring

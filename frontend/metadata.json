@@ -1,0 +1,8 @@
+{
+  "name": "Herofy",
+  "description": "Customer success workspace for high-growth startups, featuring 'Editorial Flow meets Hero HUD'.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

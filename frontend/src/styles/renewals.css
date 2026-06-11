@@ -1,0 +1,89 @@
+/* ============================================================
+   RENEWALS · pipeline list + adaptive workspace
+   Translated to the app's Midnight·Gold tokens (no new fonts).
+   Atoms here are the bits that don't map cleanly to Tailwind:
+   posture tints, progress tracks + baseline ticks, the spine.
+   ============================================================ */
+
+/* ---- posture accents (left edge + tint) ---- */
+.rn-edge-defend { box-shadow: inset 3px 0 0 0 var(--signal-risk); }
+.rn-edge-expand { box-shadow: inset 3px 0 0 0 var(--color-signal-ok); }
+.rn-edge-hold   { box-shadow: inset 3px 0 0 0 var(--brass-500); }
+
+.rn-hero--defend {
+  box-shadow: inset 3px 0 0 0 var(--signal-risk);
+  background: linear-gradient(135deg, rgba(var(--signal-risk-rgb), 0.06), transparent 62%), var(--color-surface);
+}
+.rn-hero--expand {
+  box-shadow: inset 3px 0 0 0 var(--color-signal-ok);
+  background: linear-gradient(135deg, rgba(var(--brass-rgb), 0.07), transparent 62%), var(--color-surface);
+}
+.rn-hero--hold {
+  box-shadow: inset 3px 0 0 0 var(--brass-500);
+  background: var(--color-surface);
+}
+
+/* ---- posture badge ---- */
+.rn-badge {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border: 1px solid;
+  white-space: nowrap;
+  line-height: 1;
+}
+.rn-badge--defend { color: var(--signal-risk); border-color: rgba(var(--signal-risk-rgb), 0.45); background: rgba(var(--signal-risk-rgb), 0.08); }
+.rn-badge--expand { color: var(--color-signal-ok); border-color: color-mix(in srgb, var(--color-signal-ok) 45%, transparent); background: color-mix(in srgb, var(--color-signal-ok) 8%, transparent); }
+.rn-badge--hold   { color: var(--brass-500); border-color: color-mix(in srgb, var(--brass-500) 50%, transparent); background: rgba(var(--brass-rgb), 0.07); }
+
+/* ---- progress track + baseline tick (list mini-bar + spine) ---- */
+.rn-track { position: relative; background: var(--color-surface-deep); overflow: hidden; }
+.rn-track__fill { position: absolute; inset: 0 auto 0 0; height: 100%; }
+.rn-track__fill--ok   { background: var(--color-signal-ok); }
+.rn-track__fill--warn { background: var(--color-signal-warn); }
+.rn-track__fill--risk { background: var(--signal-risk); }
+.rn-track__tick {
+  position: absolute; top: -3px; bottom: -3px; width: 2px;
+  background: var(--color-fg-300); opacity: 0.55;
+}
+
+/* ---- play card primary treatment ---- */
+.rn-play--primary {
+  border-color: color-mix(in srgb, var(--brass-500) 55%, transparent) !important;
+  background: rgba(var(--brass-rgb), 0.06);
+  box-shadow: inset 3px 0 0 0 var(--brass-500);
+}
+
+/* ---- numbered motion steps (sidekick rail) ---- */
+.rn-steps { margin: 12px 0 0; padding: 0; list-style: none; }
+.rn-steps li {
+  font-family: var(--font-sans);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: var(--color-fg-300);
+  padding: 7px 0 7px 22px;
+  position: relative;
+  border-top: 1px solid var(--color-rule);
+}
+.rn-steps li::before {
+  content: attr(data-n);
+  position: absolute; left: 0; top: 7px;
+  font-family: var(--font-mono); font-size: 9px; font-weight: 700;
+  color: var(--brass-500);
+}
+
+/* ---- section header (hairline · label · rule) ---- */
+.rn-sechdr { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.rn-sechdr__hair { width: 18px; height: 2px; background: var(--brass-500); flex: 0 0 auto; }
+.rn-sechdr__lbl {
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.22em; text-transform: uppercase; color: var(--color-fg-200);
+}
+.rn-sechdr__line { flex: 1; height: 1px; background: var(--color-rule); }
+.rn-sechdr__note {
+  font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--color-fg-400);
+}
