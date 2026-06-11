@@ -1,0 +1,96 @@
+/* ============================================================
+   Risk / Save Play card — Midnight Brass alarm treatment.
+
+   A two-color system on the standard navy surface:
+   • terracotta  (--signal-risk)  carries everything "urgent"
+   • brass        (--brass-500)   carries emphasis + the sequence
+
+   Self-contained and reusable: the component only needs the
+   semantic `risk-card*` classes below for color; layout/spacing/
+   typography stay in Tailwind utilities. Drop these classes on
+   any card to get the same alarm treatment.
+   Color tokens (--signal-risk, --brass-*) are defined centrally in index.css §1.
+   ============================================================ */
+
+/* ---- container: terracotta border + corner wash + left spine ---- */
+.risk-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(var(--signal-risk-rgb), 0.45);
+  background: var(--color-surface);
+}
+
+/* faint terracotta radial fading to transparent, over the base surface (below content) */
+.risk-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(70% 60% at 100% 0%, rgba(var(--signal-risk-rgb), 0.10), transparent 60%);
+}
+
+/* solid terracotta left spine, 3px (above content so the alarm wash can't cover it) */
+.risk-card::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 3px;
+  z-index: 2;
+  background: var(--signal-risk);
+}
+
+/* keep real content above the corner wash, below the spine */
+.risk-card > * { position: relative; z-index: 1; }
+
+/* ---- alarm header bar ---- */
+.risk-card__alarm {
+  background: rgba(var(--signal-risk-rgb), 0.08);
+  border-bottom: 1px solid rgba(var(--signal-risk-rgb), 0.25);
+}
+.risk-card__alarm-label { color: var(--signal-risk); }
+
+/* ---- urgency strip: tinted frame + dividers, terracotta crit numbers ---- */
+.risk-card__strip {
+  border-top: 1px solid rgba(var(--signal-risk-rgb), 0.30);
+  border-left: 1px solid rgba(var(--signal-risk-rgb), 0.30);
+}
+.risk-card__cell {
+  border-right: 1px solid rgba(var(--signal-risk-rgb), 0.20);
+  border-bottom: 1px solid rgba(var(--signal-risk-rgb), 0.20);
+}
+.risk-card__num--crit { color: var(--signal-risk); }
+
+/* ---- brass: emphasis + the move sequence ---- */
+.risk-card__seq { color: var(--brass-500); }       /* the ✦ "THE SAVE PLAY" label */
+
+.risk-card__step-num {                              /* default (pending) move badge */
+  border: 1px solid var(--color-border);
+  color: var(--color-fg-300);
+}
+.risk-card__step-num--active {                      /* the active move's number badge */
+  border-color: var(--brass-500);
+  color: var(--brass-400);
+  background: rgba(var(--brass-rgb), 0.10);
+}
+.risk-card__step-num--done {                        /* completed move */
+  border-color: var(--brass-500);
+  background: var(--brass-500);
+  color: var(--color-surface);
+}
+
+/* ---- "DO NOW" tag ---- */
+.risk-card__donow {
+  color: var(--signal-risk);
+  background: rgba(var(--signal-risk-rgb), 0.08);
+  border: 1px solid rgba(var(--signal-risk-rgb), 0.40);
+}
+
+/* ---- primary CTA ---- */
+.risk-card__cta {
+  background: var(--signal-risk);
+  color: #faf6ec;
+  transition: background-color 0.15s ease;
+}
+.risk-card__cta:hover { background: var(--signal-risk-hover); }

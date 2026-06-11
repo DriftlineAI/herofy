@@ -1,0 +1,681 @@
+/* ============================================================
+   SIDEKICK — HUD pane / log entry style
+   Midnight · Gold theme
+
+   Sidekick is never a colored notice box. It's a system log entry:
+   surface background, 4px gold left rail, mono header strip with
+   a live pulse and a reference code, then body text.
+   ============================================================ */
+
+/* Base Sidekick container */
+.sk {
+  position: relative;
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-accent);
+  background-color: var(--color-surface);
+  box-shadow: var(--bezel-shadow);
+  max-width: 620px;
+  margin: 0;
+}
+
+/* Header strip — mono chrome with pulse and ref code */
+.sk__header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--color-rule);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  color: var(--color-accent);
+}
+
+.sk__header-pulse {
+  height: 6px;
+  width: 6px;
+  border-radius: 50%;
+  background-color: var(--color-accent);
+  animation: hud-pulse 2.4s ease-in-out infinite;
+}
+
+.sk__header-label {
+  flex: 1;
+}
+
+.sk__header-refcode {
+  color: var(--color-fg-400);
+  letter-spacing: 0.25em;
+  font-weight: 400;
+}
+
+/* Tag — now styled like hud-pane__header (no absolute positioning) */
+.sk__tag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--color-rule);
+  background: var(--color-surface);
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  font-weight: 600;
+}
+
+.sk__tag svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+/* Body content */
+.sk__body {
+  padding: 20px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-fg-200);
+  line-height: 1.65;
+}
+
+.sk__body strong {
+  color: var(--color-fg-100);
+  font-weight: 600;
+}
+
+.sk__body em {
+  font-family: var(--font-sans);
+  font-style: italic;
+  font-weight: 600;
+  color: var(--color-accent);
+}
+
+/* ============================================================
+   SIDEKICK STATES
+   ============================================================ */
+
+/* TIP — factual suggestion */
+.sk--tip {
+  /* Default styling */
+}
+
+/* ASKING — needs an answer */
+.sk--ask {
+  border-left-color: var(--color-accent);
+}
+
+.sk--ask .sk__question {
+  font-family: var(--font-sans);
+  font-style: italic;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-fg-100);
+  line-height: 1.4;
+  margin: 0 0 16px;
+  max-width: 540px;
+}
+
+.sk--ask .sk__why {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-fg-400);
+  line-height: 1.6;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--color-rule);
+}
+
+.sk--ask .sk__why-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--color-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  margin-right: 8px;
+  font-weight: 600;
+}
+
+/* OBSERVED — quieter factual note */
+.sk--obs {
+  border-left-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+.sk--obs .sk__tag,
+.sk--obs .sk__header {
+  color: var(--color-fg-300);
+}
+
+/* WORKING — agent running, live pulse */
+.sk--work {
+  border-left-color: var(--color-accent);
+}
+
+/* Body already carries its own padding; trim its bottom so the step/progress
+   below it own the lower spacing and the block reads as one unit. */
+.sk--work .sk__body {
+  padding-bottom: 4px;
+}
+
+.sk--work .sk__step {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-fg-300);
+  letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  /* Align with the body's 20px inset instead of sitting on the left accent border. */
+  padding: 0 20px;
+}
+
+.sk--work .sk__progress {
+  display: flex;
+  gap: 3px;
+  margin-top: 12px;
+  padding: 0 20px 20px;
+}
+
+.sk--work .sk__progress > span {
+  height: 2px;
+  flex: 1;
+  background: var(--color-border);
+}
+
+.sk--work .sk__progress > span.on {
+  background: var(--color-accent);
+}
+
+.sk--work .sk__progress > span.cur {
+  background: var(--color-accent);
+  animation: ai-step 1.4s ease-in-out infinite;
+}
+
+@keyframes ai-step {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* RESOLVED — history, dimmed */
+.sk--done {
+  border-left-color: var(--color-border);
+  opacity: 0.85;
+}
+
+.sk--done .sk__tag,
+.sk--done .sk__header {
+  color: var(--color-fg-400);
+}
+
+.sk--done .sk__resolution {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-fg-300);
+  margin: 6px 0 0;
+}
+
+.sk--done .sk__by {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-fg-400);
+  letter-spacing: 0.1em;
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ============================================================
+   ANSWER AFFORDANCES — HITL questions
+   ============================================================ */
+
+.sk-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.sk-option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.sk-option:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-bg);
+}
+
+.sk-option__avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-border);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.sk-option__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sk-option__name {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-fg-100);
+}
+
+.sk-option__role {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-fg-400);
+}
+
+.sk-option__meta {
+  margin-left: auto;
+  text-align: right;
+}
+
+.sk-option__signal {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--color-fg-300);
+}
+
+.sk-option__last {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-fg-400);
+  margin-top: 2px;
+}
+
+.sk-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* Buttons */
+.sk-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  padding: 10px 16px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-fg-300);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sk-btn:hover {
+  color: var(--color-fg-100);
+  border-color: var(--color-border-strong);
+}
+
+.sk-btn--primary {
+  background: var(--color-accent);
+  color: var(--color-page);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 16px var(--color-accent-glow);
+}
+
+.sk-btn--primary:hover {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+.sk-btn--accent {
+  color: var(--color-accent);
+  border-color: var(--color-accent-glow);
+}
+
+.sk-btn--accent:hover {
+  color: var(--color-accent-hover);
+  border-color: var(--color-accent);
+}
+
+/* ============================================================
+   SIDEKICK PRESENCE — nav badge, alert banner, FAB
+   ============================================================ */
+
+/* Nav badge */
+.sk-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  background: var(--color-accent);
+  color: var(--color-page);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  margin-left: 6px;
+}
+
+.sk-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: var(--color-page);
+  border-radius: 50%;
+}
+
+/* Contextual alert banner */
+.sk-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-accent);
+  background: var(--color-surface);
+  box-shadow: var(--bezel-shadow);
+  margin-bottom: 32px;
+}
+
+.sk-alert__glyph {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-accent-glow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.sk-alert__body {
+  flex: 1;
+}
+
+.sk-alert__title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.sk-alert__items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sk-alert__items li {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-fg-200);
+  line-height: 1.6;
+  padding-left: 14px;
+  position: relative;
+}
+
+.sk-alert__items li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 11px;
+  width: 6px;
+  height: 1px;
+  background: var(--color-accent);
+}
+
+.sk-alert__action {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Floating Copilot FAB */
+.copilot-fab {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px 14px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--color-fg-100);
+  box-shadow: var(--bezel-shadow), 0 0 30px var(--color-accent-glow);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.copilot-fab:hover {
+  border-color: var(--color-accent);
+}
+
+.copilot-fab__sigil {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-accent);
+}
+
+.copilot-fab__count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--color-accent);
+  color: var(--color-page);
+  padding: 2px 8px;
+}
+
+.copilot-fab__tour {
+  width: 9px;
+  height: 9px;
+}
+
+.copilot-fab__kbd {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--color-fg-400);
+  border: 1px solid var(--color-border);
+  padding: 2px 6px;
+  letter-spacing: 0.15em;
+}
+
+/* ============================================================
+   PULSE ANIMATION
+   ============================================================ */
+
+@keyframes hud-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.pulse {
+  position: relative;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+}
+
+.pulse::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+
+.pulse.continuous::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--color-accent-hover);
+  opacity: 0.75;
+  animation: ai-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.pulse.muted::after {
+  background: var(--color-fg-400);
+}
+
+@keyframes ai-ping {
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+/* ============================================================
+   RIGHT RAIL — customer context
+   ============================================================ */
+
+.rail {
+  border: 1px solid var(--color-border);
+  border-left: 4px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+  background: var(--color-surface);
+  box-shadow: var(--bezel-shadow);
+  padding: 24px;
+}
+
+.rail__title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  font-weight: 600;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--color-rule);
+  margin-bottom: 18px;
+}
+
+.rail__customer {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  line-height: 1;
+  color: var(--color-fg-100);
+  margin: 0 0 4px;
+}
+
+.rail__sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-fg-400);
+  letter-spacing: 0.1em;
+  margin-bottom: 20px;
+}
+
+.rail__meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 18px;
+  margin-bottom: 22px;
+}
+
+.rail__meta .k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  color: var(--color-fg-400);
+  margin-bottom: 4px;
+}
+
+.rail__meta .v {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-fg-100);
+}
+
+.rail__section-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  color: var(--color-fg-400);
+  font-weight: 600;
+  margin-top: 24px;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-rule);
+  display: flex;
+  justify-content: space-between;
+}
+
+.rail__section-label .count {
+  color: var(--color-accent);
+}
+
+.rail .sk {
+  max-width: none;
+  margin-bottom: 16px;
+}
+
+.rail .sk:last-child {
+  margin-bottom: 0;
+}
+
+.rail .sk__body {
+  font-size: 13px;
+}
+
+.rail__youarehere {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  background: var(--color-accent-bg);
+  padding: 2px 8px;
+  margin-top: 6px;
+}
+
+.rail__quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.rail__quick-actions .sk-btn {
+  justify-content: space-between;
+  width: 100%;
+}

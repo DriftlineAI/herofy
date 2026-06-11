@@ -1,0 +1,59 @@
+# Herofy Python Backend Dependencies
+# FastAPI server with Google ADK agents
+
+# FastAPI & Server
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+pydantic>=2.9.0
+pydantic-settings>=2.5.0
+email-validator>=2.0.0
+
+# Database
+asyncpg>=0.29.0
+
+# Google ADK & AI
+# Using unified google-genai SDK (google-generativeai is deprecated as of Nov 2025)
+google-adk>=1.0.0
+google-genai>=1.72
+
+# Firebase Auth
+firebase-admin>=6.5.0
+
+# OAuth & Encryption
+cryptography>=42.0.0
+google-api-python-client>=2.108.0
+google-auth>=2.25.2
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+
+# Slack Integration
+slack-bolt[async]>=1.18.0
+
+# Pinecone Vector Index (semantic memory recall — see orchestrator/memory/pinecone_ingest.py)
+# Free tier works; index must be created with dimension=768, metric=cosine.
+pinecone>=3.0
+
+# Utilities
+python-dotenv>=1.0.0
+structlog>=24.4.0
+python-json-logger>=2.0.7
+httpx>=0.28.0
+
+# Email
+resend>=2.4.0
+
+# LLM Observability — traces every agent run via Langfuse
+# Official Google ADK integration: auto-instruments all ADK agents via OTel
+langfuse>=3.0.0
+openinference-instrumentation-google-adk>=0.1.0
+
+# OpenTelemetry (required by Langfuse OTel exporter + ADK instrumentation)
+opentelemetry-api>=1.23.0
+opentelemetry-sdk>=1.23.0
+opentelemetry-exporter-otlp-proto-grpc>=1.23.0
+opentelemetry-exporter-gcp-trace>=1.6.0
+
+# Testing
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+pytest-mock>=3.14.0

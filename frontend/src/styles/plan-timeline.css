@@ -1,0 +1,80 @@
+/* ============================================================
+   Plan Timeline — shared vertical rail + status dots
+   The "Plan 04" treatment from the landing guided demo, reused
+   across plan/milestone surfaces (Onboarding, Customer plan lenses).
+
+   Structure:
+     .plan-tl            grid container, left gutter holds the rail
+       .plan-tl__rail    absolute gradient line down the gutter
+       .plan-tl__item    position:relative wrapper around each card
+         .plan-tl__dot   absolute status dot sitting over the rail
+
+   Dot color encodes completeness:
+     done     → green   (signal-ok)
+     active   → brass    (accent)        in_progress / current
+     risk     → terracotta (signal-risk) blocked / at-risk
+     skip     → muted
+     default  → hollow muted             not_started
+   ============================================================ */
+
+.plan-tl {
+  position: relative;
+  display: grid;
+  gap: var(--plan-tl-gap, 10px);
+  padding-left: 26px;
+}
+
+.plan-tl__rail {
+  position: absolute;
+  left: 9px;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0,
+    var(--color-border-strong) 7%,
+    var(--color-border-strong) 93%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+.plan-tl__item { position: relative; }
+
+.plan-tl__dot {
+  position: absolute;
+  left: -22px;
+  top: var(--plan-dot-top, 18px);
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--color-page);
+  border: 1.5px solid var(--color-border-strong);
+  /* halo masks the rail line behind the dot; matches the gutter background */
+  box-shadow: 0 0 0 3px var(--plan-tl-bg, var(--color-page));
+  z-index: 1;
+}
+
+.plan-tl__dot--done {
+  background: var(--color-signal-ok);
+  border-color: var(--color-signal-ok);
+}
+.plan-tl__dot--active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  box-shadow:
+    0 0 0 3px var(--plan-tl-bg, var(--color-page)),
+    0 0 10px var(--color-accent-glow);
+}
+.plan-tl__dot--risk {
+  background: var(--signal-risk);
+  border-color: var(--signal-risk);
+  box-shadow:
+    0 0 0 3px var(--plan-tl-bg, var(--color-page)),
+    0 0 10px rgba(var(--signal-risk-rgb), 0.45);
+}
+.plan-tl__dot--skip {
+  background: var(--color-fg-400);
+  border-color: var(--color-fg-400);
+}

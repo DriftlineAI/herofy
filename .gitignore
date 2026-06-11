@@ -1,0 +1,72 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build outputs
+build/
+dist/
+coverage/
+*.egg-info/
+
+# IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment — all subdirectories
+**/.env
+**/.env.*
+!**/.env.example
+*.env.old
+*.gcloudignore.old
+# Local ADK agent runtime state (sqlite sessions) — never track.
+**/.adk/*.db
+
+# Database
+*.sql.backup
+pgdata/
+
+# Python
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# Testing
+coverage/
+.nyc_output/
+
+# Misc
+*.tgz
+.cache/
+
+# Google Cloud SDK
+google-cloud-sdk/
+
+# Firebase
+.firebase/
+firebase-debug.log
+dataconnect-debug.log
+pglite-debug.log
+ui-debug.log
+
+# Firebase Data Connect
+.dataconnect/
+dataconnect-generated/
+**/dataconnect-generated/
+
+# AI 
+.claude/*
+.specstory/*
+.agents/*
+
+# IDE
+.vscode/

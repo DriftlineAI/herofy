@@ -1,0 +1,19 @@
+{
+  "name": "Herofy Mobile",
+  "short_name": "Herofy Go",
+  "description": "Customer Success triage on the go — Today, conversations, customers, meetings, and Sidekick.",
+  "start_url": "/m",
+  "scope": "/m",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1220",
+  "theme_color": "#0b1220",
+  "icons": [
+    {
+      "src": "/herofy-mobile-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

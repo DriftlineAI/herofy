@@ -1,0 +1,776 @@
+/* Midnight · Gold — Herofy Theme
+   CSS + Tailwind only. Theme switching via class="dark" on <html>.
+   ============================================================ */
+
+/* Google Fonts — Vigilante typography stack (+ Antonio for the wordmark lockup) */
+@import url('https://fonts.googleapis.com/css2?family=Antonio:wght@600;700&family=Bebas+Neue&family=Barlow+Condensed:ital,wght@0,500;0,600;0,700;1,500;1,700&family=Share+Tech+Mono&display=swap');
+
+@import "tailwindcss";
+@import "./styles/playbooks.css";
+@import "./styles/setup.css";
+@import "./styles/risk-card.css";
+@import "./styles/plan-timeline.css";
+@import "./styles/renewals.css";
+
+/* ============================================================
+   §1. DESIGN TOKENS — CSS Custom Properties
+   Day mode on :root, night mode on .dark
+   ============================================================ */
+
+:root {
+  /* Surfaces */
+  --color-page:           #f3f5fa;
+  --color-surface:        #ffffff;
+  --color-surface-2:      #f8faff;
+  --color-surface-deep:   #e9edf6;
+  --color-border:         #dde3ef;
+  --color-border-strong:  #c4cee0;
+  --color-rule:           rgba(15, 23, 42, 0.10);
+  --color-accent-bg:      #faedce;
+
+  /* Text */
+  --color-fg-100:         #0b1220;
+  --color-fg-200:         #2c3a55;
+  --color-fg-300:         #56678a;
+  --color-fg-400:         #8694b3;
+
+  /* Accent — antique gold */
+  --color-accent:         #8a5e10;
+  --color-accent-hover:   #a87318;
+  --color-accent-glow:    rgba(200, 144, 28, 0.28);
+
+  /* Signals (shared across modes) */
+  --color-signal-ok:      #10b981;
+  --color-signal-warn:    #f59e0b;
+  --color-signal-bad:     #dc2626;
+
+  /* Brand accents — Midnight Brass (shared across modes).
+     Terracotta carries "urgent/risk"; brass carries emphasis + card edges. */
+  --signal-risk:          #c75a4e;
+  --signal-risk-hover:    #d06658;
+  --signal-risk-rgb:      199, 90, 78;
+  --brass-400:            #d4b675;
+  --brass-500:            #b89556;
+  --brass-rgb:            184, 149, 86;
+
+  /* Card bezel — Lift */
+  --bezel-highlight:      rgba(255, 255, 255, 0.90);
+  --bezel-shadow:         0 1px 0 var(--bezel-highlight) inset,
+                          0 18px 32px -20px rgba(0, 0, 0, 0.18);
+
+  /* Selection */
+  --color-selection-bg:   #faedce;
+  --color-selection-fg:   #8a5e10;
+}
+
+.dark {
+  /* Surfaces */
+  --color-page:           #0b1220;
+  --color-surface:        #101a2e;
+  --color-surface-2:      #152138;
+  --color-surface-deep:   #08101c;
+  --color-border:         #1a273e;
+  --color-border-strong:  #2f4068;
+  --color-rule:           rgba(236, 232, 218, 0.10);
+  --color-accent-bg:      #1f2334;
+
+  /* Text — warm cream-leaning neutrals */
+  --color-fg-100:         #f1ede0;
+  --color-fg-200:         #dcd5c2;
+  --color-fg-300:         #b4ad9b;
+  --color-fg-400:         #8a8576;
+
+  /* Accent — muted brass (matches logo cape) */
+  --color-accent:         #a87318;
+  --color-accent-hover:   #c8901c;
+  --color-accent-glow:    rgba(200, 144, 28, 0.28);
+
+  /* Card bezel — Lift (dark) */
+  --bezel-highlight:      rgba(255, 255, 255, 0.06);
+  --bezel-shadow:         0 1px 0 var(--bezel-highlight) inset,
+                          0 18px 32px -20px rgba(0, 0, 0, 0.55);
+
+  /* Selection */
+  --color-selection-bg:   rgba(200, 144, 28, 0.3);
+  --color-selection-fg:   #f1ede0;
+}
+
+/* ============================================================
+   §2. TAILWIND THEME EXTENSION — @theme directive (TW4)
+   ============================================================ */
+
+@theme {
+  /* Typography — Vigilante stack */
+  --font-display: "Bebas Neue", Impact, ui-sans-serif, sans-serif;
+  --font-sans: "Barlow Condensed", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Share Tech Mono", ui-monospace, monospace;
+  --font-wordmark: "Antonio", "Bebas Neue", sans-serif;
+
+  /* NOTE: Colors are defined as CSS custom properties in :root and .dark
+     Do NOT redefine them here to avoid circular references.
+     Tailwind utilities like bg-accent will use the CSS vars directly. */
+}
+
+/* ============================================================
+   §3. BASE LAYER — body, typography defaults
+   ============================================================ */
+
+@layer base {
+  html, body {
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    background-color: var(--color-page);
+    color: var(--color-fg-100);
+    font-family: var(--font-sans);
+    font-weight: 500;
+    font-size: 15px;
+    line-height: 1.6;
+    @apply antialiased;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  /* ============================================================
+     TYPOGRAPHY — Vigilante System
+     - Headlines: Bebas Neue (uppercase, tight)
+     - Body: Barlow Condensed (500 weight)
+     - Chrome: Share Tech Mono (uppercase, wide tracking)
+     ============================================================ */
+
+  /* All headlines use Bebas Neue uppercase */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0;
+    line-height: 1;
+    color: var(--color-fg-100);
+  }
+
+  h1 { font-size: 48px; }
+  h2 { font-size: 32px; }
+  h3 { font-size: 24px; }
+  h4 { font-size: 20px; }
+  h5 { font-size: 18px; }
+  h6 { font-size: 16px; }
+
+  /* Italic asides within headlines */
+  h1 em, h2 em, h3 em, h4 em, h5 em, h6 em,
+  h1 .italic, h2 .italic, h3 .italic, h4 .italic, h5 .italic, h6 .italic {
+    font-family: var(--font-sans);
+    font-style: italic;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+  }
+
+  /* Serif class now maps to display (Bebas) */
+  .font-serif {
+    font-family: var(--font-display) !important;
+    text-transform: uppercase;
+    letter-spacing: 0;
+    line-height: 1;
+    font-weight: 400;
+  }
+
+  ::selection {
+    background-color: var(--color-selection-bg);
+    color: var(--color-selection-fg);
+  }
+
+  /* Semantic text utilities */
+  .text-fg-100 { color: var(--color-fg-100) !important; }
+  .text-fg-200 { color: var(--color-fg-200) !important; }
+  .text-fg-300 { color: var(--color-fg-300) !important; }
+  .text-fg-400 { color: var(--color-fg-400) !important; }
+
+  /* Semantic background utilities */
+  .bg-page { background-color: var(--color-page) !important; }
+  .bg-surface { background-color: var(--color-surface) !important; }
+  .bg-surface-2 { background-color: var(--color-surface-2) !important; }
+  .bg-accent-bg { background-color: var(--color-accent-bg) !important; }
+
+  /* Semantic border utilities */
+  .border-border { border-color: var(--color-border) !important; }
+  .border-border-strong { border-color: var(--color-border-strong) !important; }
+  .border-rule { border-color: var(--color-rule) !important; }
+
+  /* Accent utilities */
+  .text-accent { color: var(--color-accent) !important; }
+  .text-accent-hover { color: var(--color-accent-hover) !important; }
+  .bg-accent { background-color: var(--color-accent) !important; }
+  .bg-accent-glow { background-color: var(--color-accent-glow) !important; }
+  .border-accent { border-color: var(--color-accent) !important; }
+
+  /* Signal utilities */
+  .text-signal-ok { color: var(--color-signal-ok) !important; }
+  .text-signal-warn { color: var(--color-signal-warn) !important; }
+  .text-signal-bad { color: var(--color-signal-bad) !important; }
+  .bg-signal-ok { background-color: var(--color-signal-ok) !important; }
+  .bg-signal-warn { background-color: var(--color-signal-warn) !important; }
+  .bg-signal-bad { background-color: var(--color-signal-bad) !important; }
+  .border-signal-bad { border-color: var(--color-signal-bad) !important; }
+  .border-signal-ok { border-color: var(--color-signal-ok) !important; }
+
+  /* Terracotta (risk) + brass utilities — the Midnight Brass alarm/emphasis palette */
+  .text-signal-risk { color: var(--signal-risk) !important; }
+  .bg-signal-risk { background-color: var(--signal-risk) !important; }
+  .bg-signal-risk-soft { background-color: rgba(var(--signal-risk-rgb), 0.10) !important; }
+  .border-signal-risk { border-color: var(--signal-risk) !important; }
+  .text-brass { color: var(--brass-500) !important; }
+  .bg-brass { background-color: var(--brass-500) !important; }
+  .border-brass { border-color: var(--brass-500) !important; }
+  /* Left edge accents — a common card/row treatment. Painted as inset shadows so they survive
+     the app's `!important` border-color utilities and hover states (which set border-color).
+     brass = standard emphasis · risk = terracotta alarm. */
+  .edge-brass { box-shadow: inset 3px 0 0 0 var(--brass-500); }
+  .edge-risk { box-shadow: inset 3px 0 0 0 var(--signal-risk); }
+  .edge-ok { box-shadow: inset 3px 0 0 0 var(--color-signal-ok); }
+  .edge-warn { box-shadow: inset 3px 0 0 0 var(--color-signal-warn); }
+  /* Muted terracotta gradient wash — for "urgent" surfaces (banner cell, alarm header). */
+  .bg-risk-wash { background: linear-gradient(135deg, rgba(var(--signal-risk-rgb), 0.14), rgba(var(--signal-risk-rgb), 0.02)) !important; }
+
+  /* Border-left color utilities — not auto-generated by Tailwind since colors live in :root not @theme */
+  .border-l-accent       { border-left-color: var(--color-accent) !important; }
+  .border-l-signal-ok    { border-left-color: var(--color-signal-ok) !important; }
+  .border-l-signal-warn  { border-left-color: var(--color-signal-warn) !important; }
+  .border-l-signal-bad   { border-left-color: var(--color-signal-bad) !important; }
+  .border-l-signal-risk  { border-left-color: var(--signal-risk) !important; }
+  .border-l-border       { border-left-color: var(--color-border) !important; }
+  .border-l-transparent  { border-left-color: transparent !important; }
+
+  /* Shadow utility */
+  .shadow-lift { box-shadow: var(--bezel-shadow) !important; }
+
+  /* Display typography — Bebas Neue */
+  .font-display {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    letter-spacing: -0.005em;
+    line-height: 0.9;
+  }
+
+  /* HUD chrome typography — Share Tech Mono */
+  .hud-chrome {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.25em;
+  }
+}
+
+/* ============================================================
+   §4. COMPONENTS — Cards, Sidekick HUD, etc.
+   ============================================================ */
+
+@layer components {
+  /* Card / Surface — Lift bezel treatment */
+  .card,
+  .surface-card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--bezel-shadow);
+  }
+
+  /* HUD-style border for panels - same as card with Lift bezel */
+  .hud-border {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--bezel-shadow);
+  }
+
+  /* Sidekick variant - card with gold left rail */
+  .hud-border-sidekick,
+  .card-sidekick {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-left: 4px solid var(--color-accent);
+    box-shadow: var(--bezel-shadow);
+  }
+
+  /* HUD Pulse animation for Sidekick */
+  @keyframes hud-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+  }
+
+  .animate-hud-pulse {
+    animation: hud-pulse 2.4s ease-in-out infinite;
+  }
+
+  /* Button base — HUD style */
+  .btn-hud {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.25em;
+    padding: 10px 16px;
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: var(--color-fg-300);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-hud:hover {
+    color: var(--color-fg-100);
+    border-color: var(--color-border-strong);
+  }
+
+  .btn-hud--primary {
+    background-color: var(--color-accent);
+    color: var(--color-page);
+    border-color: var(--color-accent);
+    box-shadow: 0 0 16px var(--color-accent-glow);
+  }
+
+  .btn-hud--primary:hover {
+    background-color: var(--color-accent-hover);
+    border-color: var(--color-accent-hover);
+  }
+
+  /* ============================================================
+     HUDPANE — The single card primitive
+     Every card-shaped surface uses this.
+     ============================================================ */
+
+  .hud-pane {
+    background: var(--color-surface);
+    border: none;
+    border-left: 4px solid var(--color-accent);
+    box-shadow: var(--bezel-shadow);
+    /* no border radius — Herofy is square */
+  }
+
+  .hud-pane--hovered,
+  .hud-pane:hover {
+    border-left-color: var(--color-accent-hover);
+  }
+
+  /* Header Strip */
+  .hud-pane__header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 18px;
+    border-bottom: 1px solid var(--color-rule);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+  }
+
+  .hud-pane__header .grow { flex: 1; }
+
+  .hud-pane__pulse {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    animation: hud-pulse 2.4s ease-in-out infinite;
+  }
+
+  .hud-pane__label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .hud-pane__more {
+    margin-left: 8px;
+    padding: 2px 8px;
+    background: var(--color-accent-bg);
+    color: var(--color-accent);
+    font-size: 10px;
+  }
+
+  .hud-pane__ref {
+    color: var(--color-fg-400);
+    letter-spacing: 0.2em;
+  }
+
+  .hud-pane__count {
+    color: var(--color-fg-400);
+    letter-spacing: 0.2em;
+  }
+
+  /* Body */
+  .hud-pane__body {
+    padding: 18px 20px;
+  }
+
+  /* Title row (customer + ARR) */
+  .hud-pane__title-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 6px;
+  }
+
+  .hud-pane__customer {
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0;
+    line-height: 1;
+    color: var(--color-fg-100);
+    margin: 0;
+  }
+
+  .hud-pane__arr {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    color: var(--color-fg-400);
+    flex-shrink: 0;
+  }
+
+  /* Story line - clamped to 2 lines */
+  .hud-pane__story {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.5;
+    color: var(--color-fg-200);
+    margin: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* ============================================================
+     HUDPANE VARIANT: ASKS (action required)
+     Filled gold pulsing header
+     ============================================================ */
+
+  /* Asks variant — whole card pulses with subtle glow */
+  .hud-pane--asks {
+    animation: asks-glow 2.4s ease-in-out infinite;
+    padding-bottom: 4px;
+  }
+
+  .hud-pane--asks .hud-pane__header,
+  .hud-pane__header--asks {
+    background: var(--color-accent);
+    color: var(--color-page);
+    font-weight: 700;
+  }
+
+  .hud-pane--asks .hud-pane__ref,
+  .hud-pane--asks .hud-pane__count {
+    color: var(--color-page);
+    opacity: 0.85;
+  }
+
+  @keyframes asks-glow {
+    0%, 100% {
+      box-shadow: var(--bezel-shadow), 0 0 0 0 var(--color-accent-glow);
+      border-left-color: var(--color-accent);
+    }
+    50% {
+      box-shadow: var(--bezel-shadow), 0 0 20px 2px var(--color-accent-glow);
+      border-left-color: var(--color-accent-hover);
+    }
+  }
+
+  /* CTA at bottom of asks cards */
+  .hud-pane__cta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 4px 18px 24px;
+    padding: 10px 14px;
+    background: var(--color-accent-bg);
+    border: 1px solid var(--color-accent);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--color-accent);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .hud-pane__cta:hover {
+    background: var(--color-accent);
+    color: var(--color-page);
+  }
+
+  .hud-pane__cta-badge {
+    opacity: 0.8;
+  }
+
+  /* ============================================================
+     HUDPANE VARIANT: COMPACT (Today rows)
+     Target height: 100-130px
+     ============================================================ */
+
+  .hud-pane--compact {
+    cursor: pointer;
+    transition: border-left-color 0.15s ease;
+  }
+
+  .hud-pane--compact:hover {
+    border-left-color: var(--color-accent-hover);
+  }
+
+  .hud-pane--compact .hud-pane__header {
+    padding: 10px 18px;
+  }
+
+  .hud-pane--compact .hud-pane__body {
+    padding: 14px 18px;
+  }
+
+  .hud-pane--compact .hud-pane__body--compact {
+    padding: 12px 18px 14px;
+  }
+
+  .hud-pane--compact .hud-pane__customer {
+    font-size: 20px;
+  }
+
+  .hud-pane--compact .hud-pane__cta {
+    margin: 0 14px 12px;
+    padding: 8px 12px;
+    font-size: 10px;
+  }
+
+  /* ============================================================
+     HUDPANE VARIANT: GROUPED ASKS
+     When 2+ sidekick items need attention, collapse into one pane
+     ============================================================ */
+
+  .hud-pane--asks-group .hud-pane__body {
+    padding: 0;
+  }
+
+  .asks-group__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .asks-group__row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    grid-template-rows: auto auto;
+    gap: 6px 18px;
+    align-items: center;
+    padding: 16px 20px;
+    border-top: 1px solid var(--color-rule);
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+
+  .asks-group__row:first-child {
+    border-top: 0;
+  }
+
+  .asks-group__row:hover {
+    background: var(--color-surface-2);
+  }
+
+  .asks-group__name {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    font-size: 18px;
+    letter-spacing: 0;
+    line-height: 1;
+    color: var(--color-fg-100);
+  }
+
+  .asks-group__ctx {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    font-family: var(--font-sans);
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 1.4;
+    color: var(--color-fg-300);
+  }
+
+  .asks-group__count {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+  }
+
+  .asks-group__action {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+    background: transparent;
+    border: 0;
+    padding: 4px 0;
+    cursor: pointer;
+    transition: color 0.15s ease;
+  }
+
+  .asks-group__action:hover {
+    color: var(--color-fg-100);
+  }
+
+  /* Responsive: stack on mobile */
+  @media (max-width: 640px) {
+    .asks-group__row {
+      grid-template-columns: 1fr auto;
+      gap: 6px 12px;
+    }
+    .asks-group__action {
+      grid-row: 1;
+    }
+  }
+}
+
+/* ============================================================
+   §5. UTILITIES
+   ============================================================ */
+
+/* Hide scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Ticker animation */
+@keyframes ticker {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* Ping animation for notifications */
+@keyframes ping {
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background-color: var(--color-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-fg-400);
+}
+
+/* ============================================================
+   §6. LEGACY COMPATIBILITY — map old color names
+   These ensure existing components work during migration.
+   ============================================================ */
+
+@layer base {
+  /* Map old cream-* to new fg-* */
+  .text-cream-100 { color: var(--color-fg-100) !important; }
+  .text-cream-200 { color: var(--color-fg-200) !important; }
+  .text-cream-300 { color: var(--color-fg-300) !important; }
+  .text-cream-400, .text-cream-500 { color: var(--color-fg-400) !important; }
+
+  /* Map old charcoal-* text to new fg-* */
+  .text-charcoal-100 { color: var(--color-fg-100) !important; }
+  .text-charcoal-200 { color: var(--color-fg-200) !important; }
+  .text-charcoal-300 { color: var(--color-fg-300) !important; }
+  .text-charcoal-400, .text-charcoal-500 { color: var(--color-fg-400) !important; }
+
+  /* Map old rust-* to new accent */
+  .text-rust-400, .text-rust-500 { color: var(--color-accent) !important; }
+  .text-rust-600 { color: var(--color-accent-hover) !important; }
+  .bg-rust-400, .bg-rust-500 { background-color: var(--color-accent) !important; }
+  .border-rust-400, .border-rust-500 { border-color: var(--color-accent) !important; }
+  .border-rust-700, .border-rust-900 { border-color: var(--color-accent-glow) !important; }
+
+  /* Map old surface colors */
+  .bg-charcoal-900, .bg-cream-50 { background-color: var(--color-surface) !important; }
+  .bg-charcoal-800 { background-color: var(--color-surface-2) !important; }
+  .bg-charcoal-700 { background-color: var(--color-border) !important; }
+
+  /* Map old border colors */
+  .border-charcoal-600, .border-charcoal-700, .border-charcoal-800 {
+    border-color: var(--color-border) !important;
+  }
+
+  /* Opacity variants */
+  .bg-charcoal-900\/50 { background-color: color-mix(in srgb, var(--color-surface) 50%, transparent) !important; }
+  .bg-charcoal-800\/50 { background-color: color-mix(in srgb, var(--color-surface-2) 50%, transparent) !important; }
+  .border-charcoal-700\/50 { border-color: color-mix(in srgb, var(--color-border) 50%, transparent) !important; }
+  .border-charcoal-700\/30 { border-color: color-mix(in srgb, var(--color-border) 30%, transparent) !important; }
+  .bg-charcoal-700\/50 { background-color: color-mix(in srgb, var(--color-border) 50%, transparent) !important; }
+  .bg-charcoal-700\/30 { background-color: color-mix(in srgb, var(--color-border) 30%, transparent) !important; }
+
+  /* Hover states */
+  .hover\:bg-charcoal-800:hover { background-color: var(--color-surface-2) !important; }
+  .hover\:bg-charcoal-700\/50:hover { background-color: color-mix(in srgb, var(--color-border) 50%, transparent) !important; }
+  .hover\:text-cream-100:hover, .hover\:text-cream-200:hover { color: var(--color-fg-100) !important; }
+  .hover\:text-cream-300:hover { color: var(--color-fg-200) !important; }
+
+  /* Group hover */
+  .group-hover\:text-cream-300 { color: var(--color-fg-200) !important; }
+  .group-hover\:border-charcoal-700\/50 { border-color: color-mix(in srgb, var(--color-border) 50%, transparent) !important; }
+
+  /* App-level legacy vars for old code */
+  --app-bg: var(--color-page);
+  --app-fg-100: var(--color-fg-100);
+  --app-fg-200: var(--color-fg-200);
+  --app-fg-300: var(--color-fg-300);
+  --app-fg-400: var(--color-fg-400);
+  --app-border: var(--color-border);
+  --app-surface: var(--color-surface);
+  --app-surface-hover: var(--color-surface-2);
+  --app-muted: var(--color-border);
+
+  /* Legacy rust aliases */
+  --rust-400: var(--color-accent-hover);
+  --rust-500: var(--color-accent);
+  --rust-600: var(--color-accent);
+  --rust-700: var(--color-accent-glow);
+  --rust-900: var(--color-accent-glow);
+
+  /* Legacy charcoal aliases */
+  --charcoal-500: var(--color-fg-400);
+  --charcoal-600: var(--color-border-strong);
+  --charcoal-700: var(--color-border);
+  --charcoal-800: var(--color-surface-2);
+  --charcoal-900: var(--color-surface);
+}
+
+/* ============================================================
+   §7. LIGHT MODE (body.light) COMPATIBILITY
+   Maps to the default :root values
+   ============================================================ */
+
+body.light {
+  /* Light mode is now the default :root, so we just ensure
+     the old body.light class continues to work */
+}
+
+/* Imports for component-specific styles */
+@import "./components/sidekick/sidekick.css";
